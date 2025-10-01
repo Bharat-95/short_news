@@ -63,11 +63,13 @@ export async function POST(request: Request): Promise<Response> {
       status: 200,
       headers: { "content-type": "application/json" },
     });
-  } catch (e: any) {
-    console.error("Handler error:", e);
-    return new Response(JSON.stringify({ error: e.message }), {
-      status: 500,
-      headers: { "content-type": "application/json" },
-    });
-  }
+  } catch (e: unknown) {
+  const message =
+    e instanceof Error ? e.message : "Unknown error occurred";
+  console.error("Handler error:", e);
+  return new Response(JSON.stringify({ error: message }), {
+    status: 500,
+    headers: { "content-type": "application/json" },
+  });
+}
 }
