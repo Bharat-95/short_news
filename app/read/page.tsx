@@ -55,7 +55,7 @@ export default function InshortsStylePage() {
 
         if (error) throw new Error(error.message);
 
-        const mapped: NewsItem[] = (data || []).map((row: any) => ({
+        const mapped: NewsItem[] = (data || []).map((row) => ({
           id: row.id,
           title: row.title,
           summary: row.summary,
@@ -66,7 +66,7 @@ export default function InshortsStylePage() {
         }));
 
         if (!cancelled) setItems(mapped);
-      } catch (e: any) {
+      } catch (e) {
         console.error(e);
         if (!cancelled) {
           setItems([]);
