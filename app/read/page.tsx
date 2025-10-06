@@ -1,20 +1,20 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { supabaseBrowser } from "@/lib/db"; // <-- import the client
+import { supabaseBrowser } from "@/lib/db";
 
 interface NewsItem {
   id: string | number;
   title: string;
-  author?: string;             // not in DB; keep for future
-  source?: string;             // from DB: source
-  summary: string;             // from DB: summary
-  imageUrl?: string;           // from DB: image_url
-  publishedAt?: string;        // from DB: published_at
-  sourceUrl?: string;          // from DB: source_url
+  author?: string;
+  source?: string;
+  summary: string;
+  imageUrl?: string;
+  publishedAt?: string;
+  sourceUrl?: string;
 }
 
 const CATEGORIES = [
-  "India","Business","Politics","Sports","Technology","Startups","Entertainement",
+  "All","Business","Politics","Sports","Technology","Startups","Entertainement",
   "International","Automobile","Science","Travel","Miscallenious","fashion",
   "Education","Health & Fitness",
 ] as const;
@@ -30,47 +30,53 @@ function formatWhen(iso?: string) {
 }
 
 export default function InshortsStylePage() {
-  const [category, setCategory] = useState<Category>("India");
+  const [category, setCategory] = useState<Category>("All");
   const [items, setItems] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // 🔽 Pull straight from Supabase (filtered by category)
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
       try {
-        let q = supabaseBrowser
+        // Build base query
+        let q: any = supabaseBrowser
           .from("news_articles")
           .select("*")
-          .order("published_at", { ascending: false })
+          // prefer pub_date column; if missing Supabase will ignore but ordering still works if column exists
+          .order("pub_date", { ascending: false })
           .limit(20);
 
-        if (category) q = q.eq("category", category);
+        // only apply category filter when a specific category is selected
+        if (category && category !== "All") {
+          q = q.eq("category", category);
+        }
 
         const { data, error } = await q;
 
         if (error) throw new Error(error.message);
 
-        const mapped: NewsItem[] = (data || []).map((row) => ({
+        // Map rows defensively to support both pub_date and published_at column names
+        const mapped: NewsItem[] = (data || []).map((row: any) => ({
           id: row.id,
           title: row.title,
-          summary: row.summary,
-          imageUrl: row.image_url ?? undefined,
-          publishedAt: row.published_at ?? undefined,
+          summary: row.summary ?? row.description ?? "",
+          imageUrl: row.image_url ?? row.image ?? undefined,
+          publishedAt: row.pub_date ?? row.published_at ?? row.created_at ?? undefined,
           sourceUrl: row.source_url ?? undefined,
           source: row.source ?? undefined,
+          author: row.author ?? undefined,
         }));
 
         if (!cancelled) setItems(mapped);
-      } catch (e) {
-        console.error(e);
+      } catch (e: any) {
+        console.error("Load news error", e);
         if (!cancelled) {
           setItems([]);
-          setError("Failed to load news");
+          setError(e?.message || "Failed to load news");
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -80,9 +86,42 @@ export default function InshortsStylePage() {
     return () => { cancelled = true; };
   }, [category]);
 
+  // helper to reload (used by Refresh button)
+  async function reloadNow() {
+    setLoading(true);
+    setError(null);
+    try {
+      let q: any = supabaseBrowser
+        .from("news_articles")
+        .select("*")
+        .order("pub_date", { ascending: false })
+        .limit(20);
+
+      if (category && category !== "All") q = q.eq("category", category);
+
+      const { data, error } = await q;
+      if (error) throw error;
+      const mapped = (data || []).map((row: any) => ({
+        id: row.id,
+        title: row.title,
+        summary: row.summary ?? row.description ?? "",
+        imageUrl: row.image_url ?? row.image ?? undefined,
+        publishedAt: row.pub_date ?? row.published_at ?? row.created_at ?? undefined,
+        sourceUrl: row.source_url ?? undefined,
+        source: row.source ?? undefined,
+      }));
+      setItems(mapped);
+    } catch (e: any) {
+      console.error("Reload error", e);
+      setError(e?.message || "Reload failed");
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900">
-      {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center gap-3">
           <button
@@ -96,6 +135,15 @@ export default function InshortsStylePage() {
           </button>
 
           <div className='text-3xl font-bold border border-gray-200 p-1 rounded-md'>Short News</div>
+
+          <div className="ml-auto flex items-center gap-3">
+            <button
+              onClick={() => reloadNow()}
+              className="rounded-md px-3 py-2 bg-emerald-600 text-white text-sm hover:bg-emerald-500"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
 
         <div className="bg-gradient-to-r from-emerald-500 via-emerald-600 to-emerald-700 text-white">
@@ -110,7 +158,6 @@ export default function InshortsStylePage() {
         </div>
       </header>
 
-      {/* Drawer overlay */}
       {drawerOpen && (
         <button
           aria-label="Close menu overlay"
@@ -119,7 +166,6 @@ export default function InshortsStylePage() {
         />
       )}
 
-      {/* Drawer with categories */}
       <aside
         aria-label="Categories menu"
         className={`fixed left-0 top-0 z-40 h-full w-72 max-w-[85vw] transform bg-white shadow-xl border-r border-gray-200 transition-transform duration-300 ${
@@ -154,7 +200,6 @@ export default function InshortsStylePage() {
         </nav>
       </aside>
 
-      {/* Feed */}
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {loading && (
           <div className="rounded-2xl border border-gray-200 bg-white p-6 text-center text-sm text-gray-500">Loading…</div>
