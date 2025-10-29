@@ -1,4 +1,6 @@
-// app/api/news/route.ts
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { NextResponse } from "next/server";
 import axios from "axios";
 import * as cheerio from "cheerio";
@@ -96,7 +98,7 @@ function parseFeedXml(xml: string, base: string) {
   $("entry").each((_, el) => {
     const $el = $(el);
     const title = ($el.find("title").first().text() || "").trim();
-    let link = $el.find("link[rel='alternate']").attr("href") || $el.find("link").attr("href") || "";
+    const link = $el.find("link[rel='alternate']").attr("href") || $el.find("link").attr("href") || "";
     const content = ($el.find("summary").first().text() || $el.find("content").first().text() || "").trim() || null;
     const pubDate = ($el.find("updated").first().text() || $el.find("published").first().text() || "").trim() || null;
     const media = $el.find("media\\:content").attr("url") || $el.find("media\\:thumbnail").attr("url") || null;
@@ -198,7 +200,7 @@ function extractArticleFromHtml(html: string, base: string) {
     null;
 
   const articleSelectors = ["article", ".article", ".post", ".post-content", ".entry-content", ".news-content", ".story-content", "#content"];
-  let paragraphs: string[] = [];
+  const paragraphs: string[] = [];
   for (const sel of articleSelectors) {
     const el = $(sel);
     if (el.length) {
@@ -346,7 +348,7 @@ export async function POST(req: Request) {
     const titleDedupeThreshold = typeof body.titleDedupeThreshold === "number" ? body.titleDedupeThreshold : 0.55;
     const classifierTimeout = typeof body.classifierTimeoutMs === "number" ? body.classifierTimeoutMs : 8000;
 
-    let diagnostics: any = { triedSites: [] };
+    const diagnostics: any = { triedSites: [] };
 
     for (const s of SITE_PRIORITIES) {
       const base = s.base.startsWith("http") ? s.base.replace(/\/+$/, "") : `https://${s.base.replace(/\/+$/, "")}`;

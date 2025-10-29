@@ -62,8 +62,8 @@ export async function summarizeText(text: string): Promise<string> {
     return final;
   } catch (err) {
     // On error: fallback to deterministic trimming of original text
-    const fallback = trimToWords(clean, 60);
-    return fallback;
+    console.error("summarizeText error:", (err as Error)?.message ?? String(err));
+    return trimToWords(clean, 60);
   }
 }
 

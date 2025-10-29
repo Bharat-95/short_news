@@ -25,7 +25,9 @@ async function httpGet(url: string) {
       maxBodyLength: 10 * 1024 * 1024,
     });
     return res.data as string;
-  } catch (err) {
+  } catch (e) {
+    
+    console.error("httpGet failed for",  e);
     return null;
   }
 }
@@ -98,7 +100,7 @@ async function extractArticlePage(url: string, base: string) {
     ".field--name-body",
   ];
 
-  let paragraphs: string[] = [];
+  const paragraphs: string[] = [];
   for (const sel of articleSelectors) {
     const el = $(sel);
     if (el.length) {
@@ -138,12 +140,6 @@ async function scrapeHomepageForLinks(baseUrl: string) {
   const $ = cheerio.load(html);
 
   const links = new Set<string>();
-  let origin: string;
-  try {
-    origin = new URL(baseUrl).origin;
-  } catch {
-    origin = baseUrl.replace(/\/+$/, "");
-  }
 
   const anchors = $("a").slice(0, 1000);
   anchors.each((_, el) => {
