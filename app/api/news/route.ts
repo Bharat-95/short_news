@@ -16,7 +16,6 @@ const SITE_PRIORITIES = [
 
 type CheerioAPI = ReturnType<typeof cheerio.load>;
 
-/** small HTTP wrapper that returns text or null */
 async function fetchText(url: string, timeoutMs = 8000) {
   try {
     const r = await axios.get(url, {
@@ -52,7 +51,6 @@ function normalizeText(s?: string | null) {
     .trim();
 }
 
-/** token-overlap similarity (symmetric-ish) */
 function tokenOverlapRatio(a?: string | null, b?: string | null) {
   const na = normalizeText(a).split(" ").filter(Boolean);
   const nb = normalizeText(b).split(" ").filter(Boolean);
@@ -60,7 +58,6 @@ function tokenOverlapRatio(a?: string | null, b?: string | null) {
   const setA = new Set(na);
   let common = 0;
   for (const t of nb) if (setA.has(t)) common++;
-  // ratio normalized by smaller length (so short titles still compare well)
   return common / Math.min(na.length, nb.length);
 }
 
@@ -71,7 +68,6 @@ function trimToWords(text: string, maxWords: number) {
   return words.slice(0, maxWords).join(" ") + (words.length > maxWords ? "..." : "");
 }
 
-/** parse feed XML -> items (RSS & Atom) */
 function parseFeedXml(xml: string, base: string) {
   const $: CheerioAPI = cheerio.load(xml, { xmlMode: true });
   const items: Array<any> = [];
@@ -112,7 +108,6 @@ function parseFeedXml(xml: string, base: string) {
   return items;
 }
 
-/** try common feed endpoints for a site */
 async function probeFeedsForItems(base: string, timeoutMs = 7000) {
   const candidates = [
     "/rss", "/rss.xml", "/feed", "/feed.xml", "/feeds", "/feeds/rss.xml",
@@ -133,7 +128,6 @@ async function probeFeedsForItems(base: string, timeoutMs = 7000) {
   return [];
 }
 
-/** pick an article href candidate from a homepage */
 function pickCandidateFromHomepage(html: string, base: string): string | null {
   const $: CheerioAPI = cheerio.load(html);
   const selectors = [
@@ -166,7 +160,6 @@ function pickCandidateFromHomepage(html: string, base: string): string | null {
   return first || null;
 }
 
-/** extract article content from article page HTML */
 function extractArticleFromHtml(html: string, base: string) {
   const $: CheerioAPI = cheerio.load(html);
 
@@ -227,7 +220,6 @@ function extractArticleFromHtml(html: string, base: string) {
   };
 }
 
-/** bounded summarizer helper */
 async function summarizeWithTimeout(text: string, ms = 10000) {
   return await Promise.race([
     (async () => {
@@ -240,7 +232,6 @@ async function summarizeWithTimeout(text: string, ms = 10000) {
   ]);
 }
 
-/** bounded classifier helper */
 async function classifyWithTimeout(text: string, ms = 8000) {
   return await Promise.race([
     (async () => {
@@ -253,23 +244,15 @@ async function classifyWithTimeout(text: string, ms = 8000) {
   ]);
 }
 
-/**
- * Enhanced dedupe check:
- * - exact source_url handled separately
- * - title similarity: fetch a recent set of titles from DB (configurable limit)
- *   and compute tokenOverlapRatio; if above threshold we treat as duplicate.
- */
 async function isDuplicateTitle(candidateTitle: string, threshold = 0.55, recentLimit = 500) {
   if (!candidateTitle) return false;
   try {
-    // fetch recent titles (most recent first) to compare against
     const { data, error } = await supabaseBrowser
       .from("news_articles")
       .select("id,title")
       .order("created_at", { ascending: false })
       .limit(recentLimit);
     if (error) {
-      // If query fails, be conservative and return false (so we don't block insertion)
       console.error("Title dedupe select failed:", error);
       return false;
     }
@@ -288,26 +271,21 @@ async function isDuplicateTitle(candidateTitle: string, threshold = 0.55, recent
   }
 }
 
-/** Allowed categories list (exact strings we want to store) */
 const ALLOWED_CATEGORIES = [
   "India","Business","Politics","Sports","Technology","Startups","Entertainement",
   "International","Automobile","Science","Travel","Miscallenious","fashion",
   "Education","Health & Fitness",
 ];
 
-/** Map classifier output to one of ALLOWED_CATEGORIES (fuzzy) */
 function mapToAllowedCategory(raw?: string | null) {
   if (!raw) return "Miscallenious";
   const r = String(raw).toLowerCase();
-  // direct match
   for (const c of ALLOWED_CATEGORIES) {
     if (c.toLowerCase() === r) return c;
   }
-  // fuzzy contains
   for (const c of ALLOWED_CATEGORIES) {
     if (r.includes(c.toLowerCase())) return c;
   }
-  // common synonyms
   if (r.includes("business") || r.includes("econom")) return "Business";
   if (r.includes("polit") || r.includes("election") || r.includes("parliament")) return "Politics";
   if (r.includes("sport")) return "Sports";
@@ -321,14 +299,9 @@ function mapToAllowedCategory(raw?: string | null) {
   if (r.includes("fashion") || r.includes("style")) return "fashion";
   if (r.includes("education") || r.includes("school") || r.includes("teacher")) return "Education";
   if (r.includes("health") || r.includes("covid") || r.includes("disease") || r.includes("fitness")) return "Health & Fitness";
-  // fallback
   return "Miscallenious";
 }
 
-/**
- * Handler: one article inserted per API hit. We loop through SITE_PRIORITIES until
- * we find a non-duplicate (by URL and by title similarity) article, then insert it.
- */
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({} as any))) as {
@@ -353,17 +326,14 @@ export async function POST(req: Request) {
       const siteDiag: any = { site: base, feedFound: false, homeFetched: false, candidate: null, skipped: null };
       diagnostics.triedSites.push(siteDiag);
 
-      // first prefer feed items (if site exposes feed)
       const feedItems = await probeFeedsForItems(base, probeTimeout);
       siteDiag.feedFound = (feedItems && feedItems.length > 0);
 
-      // fetch homepage for candidate link
       const homeHtml = await fetchText(base, probeTimeout);
       siteDiag.homeFetched = !!homeHtml;
       const candidateLink = homeHtml ? pickCandidateFromHomepage(homeHtml, base) : null;
       siteDiag.candidate = candidateLink;
 
-      // derive a "best" candidate: prefer first feed item, optionally matched to candidateLink
       let matchedItem: any = null;
       if (feedItems && feedItems.length > 0) {
         matchedItem = feedItems[0];
@@ -373,7 +343,6 @@ export async function POST(req: Request) {
         }
       }
 
-      // build finalArticle object from feed or from scraping candidateLink
       let finalArticle: any = null;
       if (matchedItem) {
         finalArticle = {
@@ -386,7 +355,6 @@ export async function POST(req: Request) {
           source: s.source,
         };
 
-        // attempt to fetch article page to enrich
         try {
           if (finalArticle.link) {
             const pageHtml = await fetchText(finalArticle.link, pageTimeout);
@@ -399,6 +367,7 @@ export async function POST(req: Request) {
                   finalArticle.description = ext.description || trimToWords(ext.fullText, 60);
                 }
                 if (!finalArticle.title && ext.title) finalArticle.title = ext.title;
+                if (!finalArticle.pubDate && ext.pubDate) finalArticle.pubDate = ext.pubDate;
               }
             }
           }
@@ -427,13 +396,10 @@ export async function POST(req: Request) {
           continue;
         }
       } else {
-        // nothing to do on this site
         siteDiag.skipped = "no candidate";
         continue;
       }
 
-      // finalArticle ready — dedupe checks:
-      // 1) exact URL duplicate
       const urlToCheck = finalArticle.link;
       try {
         const { data: existingByUrl, error: selErr } = await supabaseBrowser
@@ -444,47 +410,44 @@ export async function POST(req: Request) {
           .maybeSingle();
 
         if (selErr) {
-          // log and continue to next site (safe to not block)
           siteDiag.skipped = `supabase select error: ${selErr.message || selErr}`;
           continue;
         }
         if (existingByUrl) {
           siteDiag.skipped = "exists-by-url";
-          continue; // skip this candidate, try next site
+          continue;
         }
       } catch (e) {
         siteDiag.skipped = `url-check-exception:${String(e)}`;
         continue;
       }
 
-      // 2) title similarity dedupe
       const candidateTitle = finalArticle.title || "";
       const isTitleDup = await isDuplicateTitle(candidateTitle, titleDedupeThreshold, 500);
       if (isTitleDup) {
         siteDiag.skipped = "exists-by-title";
-        continue; // treat as duplicate and try next site
+        continue;
       }
 
-      // not a duplicate — prepare short description (60 words) and insert one row
       let shortDescription = finalArticle.description || "";
       try {
         const toSummarize = finalArticle.fullText || finalArticle.description || finalArticle.title || "";
         if (toSummarize && toSummarize.length > 120) {
           const s = await Promise.race([
             summarizeWithTimeout(toSummarize, summarizerTimeout),
-            new Promise<string>((res) => setTimeout(() => res(trimToWords(toSummarize, 60)), summarizerTimeout)),
+            new Promise<string>((res) => setTimeout(() => res(trimToWords(toSummarize, 35)), summarizerTimeout)),
           ]);
           if (s && typeof s === "string" && s.trim().length > 0) {
-            shortDescription = trimToWords(s, 60);
+            shortDescription = trimToWords(s, 35);
           }
         } else if (!shortDescription && finalArticle.fullText) {
-          shortDescription = trimToWords(finalArticle.fullText, 60);
+          shortDescription = trimToWords(finalArticle.fullText, 35);
         }
       } catch {
-        if (!shortDescription && finalArticle.fullText) shortDescription = trimToWords(finalArticle.fullText, 60);
+        if (!shortDescription && finalArticle.fullText) shortDescription = trimToWords(finalArticle.fullText, 35);
       }
 
-      // --- NEW: classify category (bounded) ---
+      // classify
       let chosenCategory = "Miscallenious";
       try {
         const classifyInput = (finalArticle.fullText || finalArticle.description || finalArticle.title || "").slice(0, 4000);
@@ -498,20 +461,35 @@ export async function POST(req: Request) {
         chosenCategory = "Miscallenious";
       }
 
-      // insert payload
+      // Build categories jsonb array with simple heuristics:
+      // - always include "top-stories"
+      // - include "finance" when Business category detected
+      // - include "good-news" if article text matches some positive keywords
+      const categoriesArr: string[] = ["top-stories"];
+      if ((chosenCategory || "").toLowerCase() === "business") {
+        categoriesArr.push("finance");
+      }
+
+      const positivePattern = /\b(win|wins|won|award|awarded|success|successful|benefit|benefits|improvement|improved|record high|record-low|reduced|saved|cut|growth|grows|growths|boon|positive)\b/i;
+      const hay = (finalArticle.fullText || finalArticle.description || "").slice(0, 4000);
+      if (positivePattern.test(hay)) categoriesArr.push("good-news");
+
+      // prepare payload matching your table schema
       const payload: any = {
         title: finalArticle.title || "Untitled",
         summary: shortDescription || trimToWords(finalArticle.description || finalArticle.fullText || finalArticle.title, 60),
         image_url: finalArticle.image ?? null,
         source_url: urlToCheck,
         source: finalArticle.source ?? s.source,
-        category: chosenCategory,
+        topics: chosenCategory,              // <<-- topics stores the category text
+        categories: categoriesArr,           // <<-- jsonb array: e.g. ["top-stories","finance"]
       };
       if (finalArticle.pubDate) payload.pub_date = finalArticle.pubDate;
+      // optionally set published_at if you want to override default:
+      // if (finalArticle.pubDate) payload.published_at = finalArticle.pubDate;
 
       const { error: insertError } = await supabaseBrowser.from("news_articles").insert(payload);
       if (insertError) {
-        // handle schema mismatch for pub_date
         const msg = String(insertError.message || insertError).toLowerCase();
         if (msg.includes("pub_date") || /column .* does not exist/.test(msg)) {
           const retry = { ...payload };
@@ -519,9 +497,8 @@ export async function POST(req: Request) {
           const { error: retryErr } = await supabaseBrowser.from("news_articles").insert(retry);
           if (retryErr) {
             siteDiag.skipped = `insert-retry-failed: ${retryErr.message || retryErr}`;
-            continue; // try next site
+            continue;
           } else {
-            // inserted successfully (without pub_date)
             siteDiag.inserted = true;
             siteDiag.insertedUrl = urlToCheck;
             return NextResponse.json({
@@ -531,18 +508,18 @@ export async function POST(req: Request) {
               title: payload.title,
               image: payload.image_url,
               description: payload.summary,
-              category: chosenCategory,
+              topics: payload.topics,
+              categories: payload.categories,
               diagnostics
             }, { status: 200 });
           }
         } else {
           siteDiag.skipped = `insert-failed: ${insertError.message || insertError}`;
-          continue; // try next site
+          continue;
         }
       } else {
         siteDiag.inserted = true;
         siteDiag.insertedUrl = urlToCheck;
-        // successfully inserted one article — stop and return
         return NextResponse.json({
           ok: true,
           message: "Inserted latest article",
@@ -550,13 +527,13 @@ export async function POST(req: Request) {
           title: payload.title,
           image: payload.image_url,
           description: payload.summary,
-          category: chosenCategory,
+          topics: payload.topics,
+          categories: payload.categories,
           diagnostics
         }, { status: 200 });
       }
-    } // end for each site
+    } // end for
 
-    // if we reach here no site produced an insert
     return NextResponse.json({
       ok: false,
       message: "No non-duplicate extractable article found across candidate sites.",
