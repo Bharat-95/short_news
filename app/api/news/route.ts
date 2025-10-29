@@ -507,7 +507,7 @@ export async function POST(req: Request) {
         image_url: finalArticle.image ?? null,
         source_url: urlToCheck,
         source: finalArticle.source ?? s.source,
-        category: chosenCategory,
+        categories: ["top-stories"],
       };
       if (finalArticle.pubDate) payload.pub_date = finalArticle.pubDate;
 
