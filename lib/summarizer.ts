@@ -83,3 +83,53 @@ export async function classifyCategory(text: string): Promise<string> {
     return "Miscellaneous";
   }
 }
+
+export async function generateHeadline(text: string): Promise<{ headline: string; subheadline: string }> {
+  const clean = stripHtml(text).slice(0, 4000);
+  const system = `You are a professional news editor. Given article text, produce a compact headline and a short subheadline suitable for a news app. Return ONLY valid JSON with these two keys: {"headline":"...","subheadline":"..."} with no extra text. Headline should be short (aim for 3-8 words). Subheadline should be short too (aim 6-14 words). Avoid punctuation-heavy or sensational language.`;
+  const user = `Article (short):\n\n${clean}\n\nReturn only JSON: {"headline":"...","subheadline":"..."} without any commentary.`;
+
+  try {
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: 80,
+      temperature: 0.25,
+    });
+
+    const raw = completion.choices?.[0]?.message?.content?.trim() ?? "";
+
+    let parsed: any = null;
+    try {
+      const firstJsonMatch = raw.match(/\{[\s\S]*\}/);
+      const jsonText = firstJsonMatch ? firstJsonMatch[0] : raw;
+      parsed = JSON.parse(jsonText);
+    } catch {
+      parsed = null;
+    }
+
+    let headline = parsed?.headline ? String(parsed.headline).trim() : "";
+    let subheadline = parsed?.subheadline ? String(parsed.subheadline).trim() : "";
+
+    if (!headline && !subheadline) {
+      const words = normalizeWhitespace(clean).split(" ");
+      headline = words.slice(0, Math.min(7, Math.max(3, Math.floor(words.length / 10) || 3))).join(" ");
+      subheadline = normalizeWhitespace(clean).split(".")[0] || headline;
+      subheadline = trimToWords(subheadline, 12);
+    }
+
+    headline = trimToWords(headline, 8).replace(/["{}]/g, "").trim();
+    subheadline = trimToWords(subheadline, 14).replace(/["{}]/g, "").trim();
+
+    if (!headline) headline = "News Update";
+    if (!subheadline) subheadline = "Details inside";
+
+    return { headline, subheadline };
+  } catch (err) {
+    console.error("generateHeadline error:", (err as Error)?.message ?? String(err));
+    return { headline: "News Update", subheadline: "Details inside" };
+  }
+}
