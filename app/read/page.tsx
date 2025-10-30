@@ -30,6 +30,10 @@ function formatWhen(iso?: string) {
   });
 }
 
+function pickBestDate(row: any) {
+  return row.published_at ?? row.pub_date ?? row.publishedAt ?? row.created_at ?? null;
+}
+
 export default function InshortsStylePage() {
   const [category, setCategory] = useState<Category>("All");
   const [items, setItems] = useState<NewsItem[]>([]);
@@ -43,36 +47,43 @@ export default function InshortsStylePage() {
       setLoading(true);
       setError(null);
       try {
-        // Build base query
         let q: any = supabaseBrowser
           .from("news_articles")
           .select("*")
-          // prefer pub_date column; if missing Supabase will ignore but ordering still works if column exists
-          .order("pub_date", { ascending: false })
-          .limit(20);
+          .order("created_at", { ascending: false })
+          .limit(100);
 
-        // only apply category filter when a specific category is selected
         if (category && category !== "All") {
-          q = q.eq("category", category);
+          q = q.eq("topics", category);
         }
 
         const { data, error } = await q;
 
         if (error) throw new Error(error.message);
 
-        // Map rows defensively to support both pub_date and published_at column names
-        const mapped: NewsItem[] = (data || []).map((row: any) => ({
-          id: row.id,
-          title: row.title,
-          summary: row.summary ?? row.description ?? "",
-          imageUrl: row.image_url ?? row.image ?? undefined,
-          publishedAt: row.pub_date ?? row.published_at ?? row.created_at ?? undefined,
-          sourceUrl: row.source_url ?? undefined,
-          source: row.source ?? undefined,
-          author: row.author ?? undefined,
-        }));
+        const mapped: NewsItem[] = (data || []).map((row: any) => {
+          const best = row.published_at ?? row.pub_date ?? row.created_at ?? null;
+          return {
+            id: row.id,
+            title: row.title,
+            summary: row.summary ?? row.description ?? "",
+            imageUrl: row.image_url ?? row.image ?? undefined,
+            publishedAt: best,
+            sourceUrl: row.source_url ?? undefined,
+            source: row.source ?? undefined,
+            author: row.author ?? undefined,
+          };
+        });
 
-        if (!cancelled) setItems(mapped);
+        mapped.sort((a, b) => {
+          const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+          const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+          return tb - ta;
+        });
+
+        const top = mapped.slice(0, 20);
+
+        if (!cancelled) setItems(top);
       } catch (e: any) {
         console.error("Load news error", e);
         if (!cancelled) {
@@ -87,7 +98,6 @@ export default function InshortsStylePage() {
     return () => { cancelled = true; };
   }, [category]);
 
-  // helper to reload (used by Refresh button)
   async function reloadNow() {
     setLoading(true);
     setError(null);
@@ -95,23 +105,34 @@ export default function InshortsStylePage() {
       let q: any = supabaseBrowser
         .from("news_articles")
         .select("*")
-        .order("pub_date", { ascending: false })
-        .limit(20);
+        .order("created_at", { ascending: false })
+        .limit(100);
 
-      if (category && category !== "All") q = q.eq("category", category);
+      if (category && category !== "All") q = q.eq("topics", category);
 
       const { data, error } = await q;
       if (error) throw error;
-      const mapped = (data || []).map((row: any) => ({
-        id: row.id,
-        title: row.title,
-        summary: row.summary ?? row.description ?? "",
-        imageUrl: row.image_url ?? row.image ?? undefined,
-        publishedAt: row.pub_date ?? row.published_at ?? row.created_at ?? undefined,
-        sourceUrl: row.source_url ?? undefined,
-        source: row.source ?? undefined,
-      }));
-      setItems(mapped);
+      const mapped = (data || []).map((row: any) => {
+        const best = row.published_at ?? row.pub_date ?? row.created_at ?? null;
+        return {
+          id: row.id,
+          title: row.title,
+          summary: row.summary ?? row.description ?? "",
+          imageUrl: row.image_url ?? row.image ?? undefined,
+          publishedAt: best,
+          sourceUrl: row.source_url ?? undefined,
+          source: row.source ?? undefined,
+          author: row.author ?? undefined,
+        };
+      });
+
+      mapped.sort((a:any, b:any) => {
+        const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+        const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+        return tb - ta;
+      });
+
+      setItems(mapped.slice(0, 20));
     } catch (e: any) {
       console.error("Reload error", e);
       setError(e?.message || "Reload failed");
