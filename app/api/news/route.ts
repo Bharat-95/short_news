@@ -1,4 +1,3 @@
-// app/api/news/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from "next/server";
 import axios from "axios";
