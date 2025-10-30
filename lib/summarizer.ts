@@ -85,49 +85,92 @@ export async function classifyCategory(text: string): Promise<string> {
 }
 
 export async function generateHeadline(text: string): Promise<{ headline: string; subheadline: string }> {
-  const clean = stripHtml(text).slice(0, 4000);
-  const system = `You are a professional news editor. Given article text, produce a compact headline and a short subheadline suitable for a news app. Return ONLY valid JSON with these two keys: {"headline":"...","subheadline":"..."} with no extra text. Headline should be short (aim for 3-8 words). Subheadline should be short too (aim 6-14 words). Avoid punctuation-heavy or sensational language.`;
-  const user = `Article (short):\n\n${clean}\n\nReturn only JSON: {"headline":"...","subheadline":"..."} without any commentary.`;
+// enforce small headlines: 2-3 words for headline, 2-3 words for subheadline
+const clean = stripHtml(text).slice(0, 4000);
 
-  try {
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      max_tokens: 80,
-      temperature: 0.25,
-    });
 
-    const raw = completion.choices?.[0]?.message?.content?.trim() ?? "";
+const system = `You are a professional news editor. Given article text, produce a compact headline and a short subheadline suitable for a news app. Return ONLY valid JSON with these two keys: {"headline":"...","subheadline":"..."} with no extra text. Headline must be 2-3 words. Subheadline must be 2-3 words. Use plain language and avoid punctuation-heavy or sensational language.`;
 
-    let parsed: any = null;
-    try {
-      const firstJsonMatch = raw.match(/\{[\s\S]*\}/);
-      const jsonText = firstJsonMatch ? firstJsonMatch[0] : raw;
-      parsed = JSON.parse(jsonText);
-    } catch {
-      parsed = null;
-    }
 
-    let headline = parsed?.headline ? String(parsed.headline).trim() : "";
-    let subheadline = parsed?.subheadline ? String(parsed.subheadline).trim() : "";
+const user = `Article (short):\n\n${clean}\n\nReturn only JSON: {"headline":"...","subheadline":"..."} without any commentary.`;
 
-    if (!headline && !subheadline) {
-      const words = normalizeWhitespace(clean).split(" ");
-      headline = words.slice(0, Math.min(7, Math.max(3, Math.floor(words.length / 10) || 3))).join(" ");
-      subheadline = normalizeWhitespace(clean).split(".")[0] || headline;
-      subheadline = trimToWords(subheadline, 12);
-    }
 
-    headline = trimToWords(headline, 8).replace(/["{}]/g, "").trim();
-    subheadline = trimToWords(subheadline, 14).replace(/["{}]/g, "").trim();
+try {
+const completion = await client.chat.completions.create({
+model: "gpt-4o-mini",
+messages: [
+{ role: "system", content: system },
+{ role: "user", content: user },
+],
+max_tokens: 80,
+temperature: 0.25,
+});
 
-    if (!headline) headline = "News Update";
-    if (!subheadline) subheadline = "Details inside";
 
-    return { headline, subheadline };
+const raw = completion.choices?.[0]?.message?.content?.trim() ?? "";
+
+
+// try to extract JSON object from model output
+let parsed: any = null;
+try {
+const firstJsonMatch = raw.match(/\{[\s\S]*\}/);
+const jsonText = firstJsonMatch ? firstJsonMatch[0] : raw;
+parsed = JSON.parse(jsonText);
+} catch {
+parsed = null;
+}
+
+
+const sanitize = (s: any) => (s ? String(s).replace(/["{}]/g, "").trim() : "");
+
+
+let headline = sanitize(parsed?.headline || "");
+let subheadline = sanitize(parsed?.subheadline || "");
+
+
+const wordCount = (s: string) => (s ? s.trim().split(/\s+/).filter(Boolean).length : 0);
+
+
+// Fallback generation helpers
+const firstNWords = (source: string, n: number) => normalizeWhitespace(source).split(" ").slice(0, n).join(" ");
+
+
+// Enforce 2-3 words for headline
+if (!headline) {
+// try to create from article
+headline = firstNWords(clean, 3);
+}
+if (wordCount(headline) > 3) headline = firstNWords(headline, 3);
+if (wordCount(headline) < 2) headline = firstNWords(clean, 2) || "News Update";
+
+
+// Enforce 2-3 words for subheadline
+if (!subheadline) {
+// try to use first sentence or next few words from article
+const firstSentence = normalizeWhitespace(clean).split(".")[0] || "Details";
+subheadline = firstNWords(firstSentence, 3);
+}
+if (wordCount(subheadline) > 3) subheadline = firstNWords(subheadline, 3);
+if (wordCount(subheadline) < 2) subheadline = firstNWords(clean.split(".")[0] || clean, 2) || "Details";
+
+
+// Final sanitize and trim punctuation
+headline = headline.replace(/[\n\r]+/g, " ").replace(/["{}]/g, "").trim();
+subheadline = subheadline.replace(/[\n\r]+/g, " ").replace(/["{}]/g, "").trim();
+
+
+// As final safety-net ensure non-empty
+if (!headline) headline = "News Update";
+if (!subheadline) subheadline = "Details inside";
+
+
+// Ensure word length limits strictly
+headline = trimToWords(headline, 3);
+subheadline = trimToWords(subheadline, 3);
+
+
+// If headline still contains more than 3 words because of ellipses, force-split
+return { headline, subheadline };
   } catch (err) {
     console.error("generateHeadline error:", (err as Error)?.message ?? String(err));
     return { headline: "News Update", subheadline: "Details inside" };
