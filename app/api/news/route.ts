@@ -11,11 +11,11 @@ import {
 
 const SITE_PRIORITIES = [
   { source: "Defi Media Group", base: "https://defimedia.info" },
-  { source: "Ion News", base: "https://ionnews.mu" },
+    { source: "Mauritius Broadcasting", base: "https://mbc.intnet.mu" },
   { source: "Le Mauricien", base: "https://lemauricien.com" },
-  { source: "Inside News", base: "https://insidenews.mu" },
+  { source: "Inside News", base: "https://www.insideedition.com/" },
   { source: "NewsMoris", base: "https://newsmoris.com" },
-  { source: "Mauritius Broadcasting", base: "https://mbc.intnet.mu" },
+
 ];
 
 type CheerioAPI = ReturnType<typeof cheerio.load>;
