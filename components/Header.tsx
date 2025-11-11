@@ -1,13 +1,18 @@
+import Image from 'next/image'
 import Link from 'next/link'
 import React from 'react'
 
 const Header = () => {
   return (
     <div className='py-5 flex justify-between items-center'>
-        <div className='text-3xl font-bold border border-gray-200 p-1 rounded-md'>Short News</div>
+        <Image
+        src='/Logo.png'
+        alt='No Image Found'
+        height={80}
+        width={160} />
         <div className='space-x-10'> 
-            <Link href='/read' className='underline text-gray-300 font-semibold text-md  hover:text-green-800'>Read Now</Link>
-            <Link href='/' className='underline text-gray-300 font-semibold text-md  hover:text-green-800'>Blog</Link>
+            <Link href='/read' className='underline text-gray-500 font-semibold text-md  hover:text-black'>Read Now</Link>
+           
         </div>
     </div>
   )

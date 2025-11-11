@@ -5,7 +5,7 @@ import Footer from "@/components/Footer";
 
 
 export const metadata: Metadata = {
-  title: "Short News",
+  title: "Bref News",
 };
 
 export default function RootLayout({
