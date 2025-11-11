@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/db";
 import Image from "next/image";
 import { Loader } from "lucide-react";
+import Link from "next/link";
 
 interface NewsItem {
   id: string | number;
@@ -46,16 +47,6 @@ function formatWhen(iso?: string) {
     month: "short",
     year: "numeric",
   });
-}
-
-function pickBestDate(row: any) {
-  return (
-    row.published_at ??
-    row.pub_date ??
-    row.publishedAt ??
-    row.created_at ??
-    null
-  );
 }
 
 export default function InshortsStylePage() {
@@ -178,11 +169,6 @@ export default function InshortsStylePage() {
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 relative">
-      {(isInitialLoad || isRefreshing) && (
-        <div className="fixed inset-0 flex items-center justify-center bg-white/70 z-50">
-          <Loader className="animate-spin w-10 h-10 text-gray-600" />
-        </div>
-      )}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center gap-3">
           <button
@@ -205,6 +191,12 @@ export default function InshortsStylePage() {
           </button>
           <Image src="/Logo.png" alt="No Logo Found" width={160} height={80} />
           <div className="ml-auto flex items-center gap-3">
+            <Link
+              href="/"
+              className="rounded-md px-3 py-2 bg-black text-white text-sm hover:bg-black/80 cursor-pointer"
+            >
+              Home
+            </Link>
             <button
               onClick={() => reloadNow()}
               className="rounded-md px-3 py-2 bg-black text-white text-sm hover:bg-black/80 cursor-pointer"
@@ -278,7 +270,14 @@ export default function InshortsStylePage() {
           </ul>
         </nav>
       </aside>
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+      <main className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 pb-20">
+        {(isInitialLoad || isRefreshing) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/70 z-40">
+            <Loader className="animate-spin w-10 h-10 text-gray-600" />
+          </div>
+        )}
+
         {error && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {error}
