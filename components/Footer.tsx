@@ -1,6 +1,7 @@
 import React from "react";
 import Image from "next/image";
 import { Facebook, Twitter, Instagram, Linkedin } from "lucide-react";
+import Link from "next/link";
 
 export default function Footer() {
   return (
@@ -74,15 +75,13 @@ export default function Footer() {
         <div className="border-t border-gray-200 mt-10 pt-6 flex flex-col sm:flex-row items-center justify-between text-sm text-gray-500">
           <p>© {new Date().getFullYear()} BrefNews. All rights reserved.</p>
           <div className="flex gap-6 mt-3 sm:mt-0">
-            <a href="#" className="hover:text-gray-700 transition">
+            <Link href="/privacy" className="hover:text-gray-700 transition">
               Privacy Policy
-            </a>
-            <a href="#" className="hover:text-gray-700 transition">
+            </Link>
+            <Link href="/terms" className="hover:text-gray-700 transition">
               Terms of Service
-            </a>
-            <a href="#" className="hover:text-gray-700 transition">
-              Contact Us
-            </a>
+            </Link>
+           
           </div>
         </div>
       </div>

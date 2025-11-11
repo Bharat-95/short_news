@@ -1,10 +1,30 @@
+"use client";
+import React from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { motion } from "framer-motion";
 
 export default function HeroSection() {
+  const imgVariants = {
+    hidden: { opacity: 0, x: 80, scale: 0.98 },
+    visible: { opacity: 1, x: 0, scale: 1 },
+  };
+
+  const textVariants = {
+    hidden: { opacity: 0, y: 24 },
+    visible: { opacity: 1, y: 0 },
+  };
+
   return (
     <section className="flex flex-col-reverse md:flex-row items-center justify-center md:justify-between max-w-7xl mx-auto px-6 py-10">
-      <div className="w-full md:w-1/2 flex justify-center md:justify-start">
+      <motion.div
+        className="w-full md:w-1/2 flex justify-center md:justify-start"
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: false, amount: 0.25 }}
+        transition={{ duration: 0.7, ease: "easeOut" }}
+        variants={imgVariants}
+      >
         <div className="relative w-[280px] sm:w-[320px] md:w-[360px] drop-shadow-2xl">
           <Image
             src="/Hero.jpeg"
@@ -14,9 +34,16 @@ export default function HeroSection() {
             className="rounded-3xl object-cover"
           />
         </div>
-      </div>
+      </motion.div>
 
-      <div className="w-full md:w-1/2 text-center md:text-left space-y-6 mt-10 md:mt-0">
+      <motion.div
+        className="w-full md:w-1/2 text-center md:text-left space-y-6 mt-10 md:mt-0"
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: false, amount: 0.2 }}
+        transition={{ duration: 0.7, ease: "easeOut", delay: 0.12 }}
+        variants={textVariants}
+      >
         <h1 className="text-3xl sm:text-4xl md:text-5xl font-semibold text-gray-900 leading-snug">
           Stay updated in <span className="text-blue-600">just 60 seconds.</span>
         </h1>
@@ -43,7 +70,7 @@ export default function HeroSection() {
             />
           </Link>
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }

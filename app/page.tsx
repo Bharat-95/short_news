@@ -15,6 +15,7 @@ const page = () => {
       <CategoryNewsSection />
       <SignIn />
       <DownloadSection />
+      
     </div>
   )
 }
