@@ -11,11 +11,10 @@ import {
 
 const SITE_PRIORITIES = [
   { source: "Defi Media Group", base: "https://defimedia.info" },
-    { source: "Mauritius Broadcasting", base: "https://mbc.intnet.mu" },
+  { source: "Mauritius Broadcasting", base: "https://mbc.intnet.mu" },
   { source: "Le Mauricien", base: "https://lemauricien.com" },
   { source: "Inside News", base: "https://www.insideedition.com/" },
   { source: "NewsMoris", base: "https://newsmoris.com" },
-
 ];
 
 type CheerioAPI = ReturnType<typeof cheerio.load>;
@@ -211,18 +210,12 @@ function pickCandidateFromHomepage(html: string, base: string): string | null {
     if (seen.size > 0) return Array.from(seen)[0];
   }
 
-  const first = $("a[href]")
-    .get()
-    .map((n) =>
-      makeAbsolute(
-        (cheerio.load("").root().add(n).attr("href") || "") as string,
-        base
-      )
-    )
-    .find((u) => u && u.startsWith(base));
+ const first = $("a[href]")
+  .get()
+  .map((n) => makeAbsolute($(n).attr("href") || "", base))
+  .find((u) => u && u.startsWith(base));
   return first || null;
 }
-
 function extractArticleFromHtml(html: string, base: string) {
   const $: CheerioAPI = cheerio.load(html);
 
@@ -464,7 +457,6 @@ export async function POST(req: Request) {
           if (exact) matchedItem = exact;
         }
       }
-
       let finalArticle: any = null;
       if (matchedItem) {
         finalArticle = {
@@ -565,12 +557,15 @@ export async function POST(req: Request) {
       }
 
       let shortDescription = finalArticle.description || "";
+
+      // FIX: summary should NOT have "..."
       try {
         const toSummarize =
           finalArticle.fullText ||
           finalArticle.description ||
           finalArticle.title ||
           "";
+
         if (toSummarize && toSummarize.length > 120) {
           const s = await Promise.race([
             summarizeWithTimeout(toSummarize, summarizerTimeout),
@@ -581,16 +576,27 @@ export async function POST(req: Request) {
               )
             ),
           ]);
+
           if (s && typeof s === "string" && s.trim().length > 0) {
-            shortDescription = trimToWords(s, 35);
+            // REMOVE ellipsis from final summary
+            shortDescription = s
+              .replace(/\.\.\.$/, "")
+              .replace(/\s+\.\.\.$/, "")
+              .trim();
           }
         } else if (!shortDescription && finalArticle.fullText) {
-          shortDescription = trimToWords(finalArticle.fullText, 35);
+          const trimmed = trimToWords(finalArticle.fullText, 35);
+          shortDescription = trimmed.replace(/\.\.\.$/, "").trim();
         }
       } catch {
-        if (!shortDescription && finalArticle.fullText)
-          shortDescription = trimToWords(finalArticle.fullText, 35);
+        if (!shortDescription && finalArticle.fullText) {
+          const trimmed = trimToWords(finalArticle.fullText, 35);
+          shortDescription = trimmed.replace(/\.\.\.$/, "").trim();
+        }
       }
+
+      // FINAL CLEAN SUMMARY (no ...)
+      shortDescription = shortDescription.replace(/\.\.\.$/, "").trim();
 
       let chosenCategory = "Miscallenious";
       try {
@@ -613,10 +619,8 @@ export async function POST(req: Request) {
         chosenCategory = "Miscallenious";
       }
 
-      const categoriesArr: string[] = ["Top news"];
-      if ((chosenCategory || "").toLowerCase() === "business") {
-        if (!categoriesArr.includes("Finance")) categoriesArr.push("Finance");
-      }
+      // FIX: categories should only be the final mapped category
+      const categoriesArr: string[] = [chosenCategory];
 
       const positivePattern =
         /\b(win|wins|won|award|awarded|success|successful|benefit|benefits|improvement|improved|record high|record-low|reduced|saved|cut|growth|grows|growths|boon|positive)\b/i;
@@ -655,27 +659,32 @@ export async function POST(req: Request) {
               finalArticle.fullText ||
               finalArticle.title,
             60
-          ),
+          ).replace(/\.\.\.$/, ""),
         image_url: finalArticle.image ?? null,
         source_url: urlToCheck,
         source: finalArticle.source ?? s.source,
+
+        // FIX: topics must be chosenCategory exactly
         topics: chosenCategory,
+
         categories: categoriesArr,
         headline: headlineObj,
       };
       if (finalArticle.pubDate) payload.pub_date = finalArticle.pubDate;
-
       const { error: insertError } = await supabaseBrowser
         .from("news_articles")
         .insert(payload);
+
       if (insertError) {
         const msg = String(insertError.message || insertError).toLowerCase();
         if (msg.includes("pub_date") || /column .* does not exist/.test(msg)) {
           const retry = { ...payload };
           delete retry.pub_date;
+
           const { error: retryErr } = await supabaseBrowser
             .from("news_articles")
             .insert(retry);
+
           if (retryErr) {
             siteDiag.skipped = `insert-retry-failed: ${
               retryErr.message || retryErr
@@ -708,6 +717,7 @@ export async function POST(req: Request) {
       } else {
         siteDiag.inserted = true;
         siteDiag.insertedUrl = urlToCheck;
+
         return NextResponse.json(
           {
             ok: true,
