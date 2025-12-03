@@ -57,25 +57,34 @@ export async function summarizeText(text: string): Promise<string> {
     );
 
     // 2. FIXED REGEX: Added currency symbols ($€£₹) and parentheses/colons
-    summary = summary
-      .replace(/\.\.\.$/, "")
-      .replace(/[^\w\s.,\-'"%!?/():$€£₹]/g, "") 
-      .trim();
+    // 2. SAFE SANITIZATION (keep accents, keep French characters)
+summary = summary
+  .replace(/\.\.\.$/, "")
+  .replace(/\s+/g, " ")
+  .trim();
 
-    // 3. LOGIC FIX: Do not pad with source text. 
-    // If it's short, it's short. It's better to be short than nonsensical.
-    
-    // 4. LOGIC FIX: Soft Truncation
-    // If it is too long, try to cut at the last punctuation mark within the limit
-    // rather than slicing words blindly.
-    const words = summary.split(" ");
-    
-    if (words.length > 50) {
-       // Emergency trim if AI hallucinated a long text
-       return words.slice(0, 45).join(" ") + "...";
-    }
+// 3. HARD WORD LIMIT: cut at last full stop before 45 words
+const words = summary.split(" ");
 
-    return summary;
+if (words.length > 45) {
+  // Find last punctuation before 45 words
+  const first45 = words.slice(0, 45).join(" ");
+  const cutIndex = first45.lastIndexOf(".");
+  
+  if (cutIndex !== -1) {
+    summary = first45.slice(0, cutIndex + 1).trim();
+  } else {
+    summary = first45.trim();
+  }
+}
+
+// 4. Guarantee full stop at the end
+if (!summary.endsWith(".")) {
+  summary += ".";
+}
+
+return summary;
+
 
   } catch (err) {
     // Fallback: Take first 40 words and add ellipsis
