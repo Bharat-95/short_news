@@ -356,7 +356,6 @@ const ALLOWED_CATEGORIES = [
   "fashion",
   "Education",
   "Health & Fitness",
-  "Good News" 
 ];
 
 function mapToAllowedCategory(raw?: string | null) {
