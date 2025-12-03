@@ -1,212 +1,141 @@
 // lib/summarizer.ts
 import OpenAI from "openai";
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+});
 
-/* -----------------------------------------------------------
-   UTILITIES
------------------------------------------------------------ */
+/* ---------------------- UTILITIES ---------------------- */
 
-function stripHtml(input?: string | null) {
+function stripHtml(input?: string | null): string {
   if (!input) return "";
   return input
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, "")
-    .replace(/<\/?[^>]+(>|$)/g, " ")
+    .replace(/<\/?[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function normalizeWhitespace(s: string) {
+function normalize(s: string) {
   return s.replace(/\s+/g, " ").trim();
 }
 
-// FIXED: No "..." addition
-function trimToWords(text: string, maxWords: number) {
-  if (!text) return "";
-  const words = normalizeWhitespace(text).split(" ");
-  return words.slice(0, maxWords).join(" ");
+export function trimToWords(text: string, maxWords: number) {
+  const words = normalize(text).split(" ");
+  return words.slice(0, maxWords).join(" ").trim();
 }
 
-/* -----------------------------------------------------------
-   SUMMARIZER (EXACTLY 45 WORDS)
------------------------------------------------------------ */
+/* ---------------------- SUMMARY (MAX 45 WORDS) ---------------------- */
 
 export async function summarizeText(text: string): Promise<string> {
-  const clean = stripHtml(text);
+  const clean = stripHtml(text).slice(0, 6000);
 
-  const systemPrompt =
-    "You are a concise news writer. Output EXACTLY 45 words. One paragraph. No bullets. No titles. No ellipses. No emojis. No filler.";
+  const system = `
+You summarize news in MAX 45 words.
+Write 1 short paragraph.
+No ellipsis (...).
+No filler.
+Keep punctuation natural.
+Do NOT rewrite proper names.
+`;
 
-  const userPrompt = `Summarize the following article into EXACTLY 45 words:\n\n${clean}`;
-
-  try {
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      max_tokens: 150,
-      temperature: 0.2,
-    });
-
-    let summary = normalizeWhitespace(
-      completion.choices?.[0]?.message?.content || ""
-    );
-
-    // Improved cleanup: keeps %, !, ?, quotes, dashes
-    summary = summary
-      .replace(/\.\.\.$/, "") // remove accidental ...
-      .replace(/[^\w\s.,\-'"%!?/]/g, "") // allow more natural punctuation
-      .trim();
-
-    let words = summary.split(/\s+/).filter(Boolean);
-
-    // If too long → trim
-    if (words.length > 45) {
-      return words.slice(0, 45).join(" ");
-    }
-
-    // If too short → pad from original text
-    if (words.length < 45) {
-      const needed = 45 - words.length;
-
-      const sourceWords = normalizeWhitespace(clean)
-        .split(/\s+/)
-        .filter(Boolean);
-
-      const filler = sourceWords.slice(0, needed).join(" ");
-
-      summary = (summary + " " + filler).trim();
-    }
-
-    // FINAL ENFORCEMENT
-    summary = summary.split(/\s+/).slice(0, 45).join(" ");
-
-    return summary;
-  } catch (err) {
-    // Emergency fallback
-    return normalizeWhitespace(clean).split(/\s+/).slice(0, 45).join(" ");
-  }
-}
-
-/* -----------------------------------------------------------
-   CATEGORY CLASSIFIER
------------------------------------------------------------ */
-
-export async function classifyCategory(text: string): Promise<string> {
-  const clean = stripHtml(text);
-
-  const prompt = `Classify this news into exactly ONE category:
-
-India, Business, Politics, Sports, Technology, Startups, Entertainment,
-International, Automobile, Science, Travel, Miscellaneous,
-Fashion, Education, Health & Fitness.
-
-News: ${clean}
-
-Respond with ONLY the category name.`;
+  const user = `Summarize the following into MAX 45 words:\n\n${clean}`;
 
   try {
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 20,
-      temperature: 0.0,
-    });
-
-    const out =
-      completion.choices?.[0]?.message?.content?.trim() || "Miscellaneous";
-
-    return out.split("\n")[0].trim();
-  } catch {
-    return "Miscellaneous";
-  }
-}
-
-/* -----------------------------------------------------------
-   HEADLINE GENERATOR (2–3 WORDS)
------------------------------------------------------------ */
-
-export async function generateHeadline(
-  text: string
-): Promise<{ headline: string; subheadline: string }> {
-  const clean = stripHtml(text).slice(0, 4000);
-
-  const system = `You are a professional news editor.
-Return ONLY valid JSON: {"headline":"...","subheadline":"..."}.
-Headline: 2-3 words.
-Subheadline: 2-3 words.
-No extra explanations.`;
-
-  const user = `Article:\n\n${clean}\n\nReturn JSON ONLY.`;
-
-  try {
-    const completion = await client.chat.completions.create({
+    const res = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      max_tokens: 80,
+      max_tokens: 150,
       temperature: 0.25,
     });
 
-    const raw = completion.choices?.[0]?.message?.content?.trim() ?? "";
+    let summary = normalize(res.choices?.[0]?.message?.content || "");
 
-    // Extract JSON
-    let parsed: any = null;
-    try {
-      const match = raw.match(/\{[\s\S]*\}/);
-      const jsonText = match ? match[0] : raw;
-      parsed = JSON.parse(jsonText);
-    } catch {
-      parsed = null;
-    }
+    // Remove ellipsis
+    summary = summary.replace(/\.\.\.$/, "").trim();
 
-    const sanitize = (s: any) =>
-      (s ? String(s).replace(/["{}]/g, "").trim() : "").trim();
+    // Ensure max 45 words
+    summary = trimToWords(summary, 45);
 
-    let headline = sanitize(parsed?.headline || "");
-    let subheadline = sanitize(parsed?.subheadline || "");
+    return summary;
+  } catch {
+    return trimToWords(clean, 45);
+  }
+}
 
-    const wordCount = (s: string) =>
-      s.split(/\s+/).filter(Boolean).length || 0;
+/* ---------------------- CATEGORY CLASSIFIER ---------------------- */
 
-    const firstN = (src: string, n: number) =>
-      normalizeWhitespace(src).split(" ").slice(0, n).join(" ");
+export async function classifyCategory(text: string): Promise<string> {
+  const clean = stripHtml(text).slice(0, 4000);
 
-    /* Headline rules */
-    if (!headline) headline = firstN(clean, 3);
-    if (wordCount(headline) > 3) headline = firstN(headline, 3);
-    if (wordCount(headline) < 2)
-      headline = firstN(clean, 2) || "News Update";
+  const prompt = `
+Classify this news into one category ONLY:
 
-    /* Subheadline rules */
-    if (!subheadline) {
-      const firstSentence = clean.split(".")[0];
-      subheadline = firstN(firstSentence, 3);
-    }
-    if (wordCount(subheadline) > 3) subheadline = firstN(subheadline, 3);
-    if (wordCount(subheadline) < 2)
-      subheadline = firstN(clean, 2) || "Details";
+India, Business, Politics, Sports, Technology, Startups, Entertainment,
+International, Automobile, Science, Travel, Miscellaneous, Fashion,
+Education, Health & Fitness.
 
-    /* Final sanitize */
-    headline = trimToWords(
-      headline.replace(/[\n\r]+/g, " ").trim(),
-      3
-    );
-    subheadline = trimToWords(
-      subheadline.replace(/[\n\r]+/g, " ").trim(),
-      3
-    );
+Text: ${clean}
 
-    if (!headline) headline = "News Update";
-    if (!subheadline) subheadline = "Details inside";
+Respond with ONLY the category.`;
 
-    return { headline, subheadline };
-  } catch (err) {
-    return { headline: "News Update", subheadline: "Details inside" };
+  try {
+    const res = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 10,
+      temperature: 0,
+    });
+
+    return (res.choices?.[0]?.message?.content || "Miscellaneous").trim();
+  } catch {
+    return "Miscellaneous";
+  }
+}
+
+/* ---------------------- HEADLINE GENERATOR ---------------------- */
+
+export async function generateHeadline(text: string) {
+  const clean = stripHtml(text).slice(0, 2000);
+
+  const system = `
+Return ONLY valid JSON:
+{"headline":"...", "subheadline":"..."}
+Headline: 2–3 words
+Subheadline: 2–3 words`;
+
+  const user = `Article:\n${clean}`;
+
+  try {
+    const res = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 60,
+      temperature: 0.25,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+    });
+
+    const raw = res.choices?.[0]?.message?.content || "";
+
+    const match = raw.match(/\{[\s\S]*\}/);
+    const json = match ? match[0] : raw;
+
+    const parsed = JSON.parse(json);
+
+    return {
+      headline: trimToWords(parsed.headline || "News Update", 3),
+      subheadline: trimToWords(parsed.subheadline || "More Details", 3),
+    };
+  } catch {
+    return {
+      headline: "News Update",
+      subheadline: "More details",
+    };
   }
 }
