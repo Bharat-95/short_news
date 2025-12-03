@@ -49,11 +49,10 @@ function normalizeText(s?: string | null) {
   return s
     .replace(/<[^>]*>/g, " ")
     .replace(/[\u2018\u2019\u201c\u201d]/g, "'")
-    .replace(/[^a-z0-9\s]/gi, " ")
     .replace(/\s+/g, " ")
-    .toLowerCase()
     .trim();
 }
+
 
 function tokenOverlapRatio(a?: string | null, b?: string | null) {
   const na = normalizeText(a).split(" ").filter(Boolean);
