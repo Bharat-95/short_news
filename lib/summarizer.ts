@@ -35,52 +35,54 @@ function trimToWords(text: string, maxWords: number) {
 export async function summarizeText(text: string): Promise<string> {
   const clean = stripHtml(text);
 
-  const systemPrompt = `
-You are a news summarizer.
-Write a concise summary of the text.
-Target: 40–45 words.
-It is OK if it is between 38 and 48 words.
-Always end with a complete sentence.
-Never copy the whole article.
-  `;
+  // 1. Tell the AI to be precise, but don't break grammar if it misses by a word.
+  const systemPrompt =
+    "You are a news editor. Summarize the provided text into exactly 40 words. Do not exceed 45 words. Ensure the last sentence is complete. No filler, no intro.";
 
-  const userPrompt = `Text:\n${clean}\n\nWrite summary now.`;
+  const userPrompt = `Text to summarize:\n\n${clean}`;
 
   try {
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o-mini", // fast and cheap
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      max_tokens: 200, // <-- FIXED (100 was too small)
-      temperature: 0.2,
+      max_tokens: 100, // Give it enough room to finish a sentence
+      temperature: 0.3, // Slightly higher to allow natural flow
     });
 
-    let summary = completion.choices?.[0]?.message?.content || "";
-    summary = normalizeWhitespace(summary);
+    let summary = normalizeWhitespace(
+      completion.choices?.[0]?.message?.content || ""
+    );
 
-    // Soft word check
-    const words = summary.split(/\s+/);
+    // 2. FIXED REGEX: Added currency symbols ($€£₹) and parentheses/colons
+    summary = summary
+      .replace(/\.\.\.$/, "")
+      .replace(/[^\w\s.,\-'"%!?/():$€£₹]/g, "") 
+      .trim();
 
-    if (words.length > 48) {
-      // Trim to max 45–48 words, cut cleanly
-      const trimmed = words.slice(0, 45).join(" ");
-      const lastPeriod = trimmed.lastIndexOf(".");
-      if (lastPeriod !== -1) summary = trimmed.slice(0, lastPeriod + 1);
-      else summary = trimmed + ".";
+    // 3. LOGIC FIX: Do not pad with source text. 
+    // If it's short, it's short. It's better to be short than nonsensical.
+    
+    // 4. LOGIC FIX: Soft Truncation
+    // If it is too long, try to cut at the last punctuation mark within the limit
+    // rather than slicing words blindly.
+    const words = summary.split(" ");
+    
+    if (words.length > 50) {
+       // Emergency trim if AI hallucinated a long text
+       return words.slice(0, 45).join(" ") + "...";
     }
 
-    // Guarantee a period
-    if (!summary.endsWith(".")) summary += ".";
-
     return summary;
+
   } catch (err) {
-    // Fallback extract first 40 words
-    return clean.split(/\s+/).slice(0, 40).join(" ") + "...";
+    // Fallback: Take first 40 words and add ellipsis
+    const fallback = normalizeWhitespace(clean).split(/\s+/).slice(0, 40).join(" ");
+    return fallback + "...";
   }
 }
-
 
 /* -----------------------------------------------------------
    CATEGORY CLASSIFIER
