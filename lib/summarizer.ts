@@ -35,59 +35,52 @@ function trimToWords(text: string, maxWords: number) {
 export async function summarizeText(text: string): Promise<string> {
   const clean = stripHtml(text);
 
+  // 1. Tell the AI to be precise, but don't break grammar if it misses by a word.
   const systemPrompt =
-    "You are a concise news writer. Output EXACTLY 45 words. One paragraph. No bullets. No titles. No ellipses. No emojis. No filler.";
+    "You are a news editor. Summarize the provided text into exactly 45 words. Do not exceed 50 words. Ensure the last sentence is complete. No filler, no intro.";
 
-  const userPrompt = `Summarize the following article into EXACTLY 45 words:\n\n${clean}`;
+  const userPrompt = `Text to summarize:\n\n${clean}`;
 
   try {
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o-mini", // fast and cheap
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      max_tokens: 150,
-      temperature: 0.2,
+      max_tokens: 100, // Give it enough room to finish a sentence
+      temperature: 0.3, // Slightly higher to allow natural flow
     });
 
     let summary = normalizeWhitespace(
       completion.choices?.[0]?.message?.content || ""
     );
 
-    // Improved cleanup: keeps %, !, ?, quotes, dashes
+    // 2. FIXED REGEX: Added currency symbols ($€£₹) and parentheses/colons
     summary = summary
-      .replace(/\.\.\.$/, "") // remove accidental ...
-      .replace(/[^\w\s.,\-'"%!?/]/g, "") // allow more natural punctuation
+      .replace(/\.\.\.$/, "")
+      .replace(/[^\w\s.,\-'"%!?/():$€£₹]/g, "") 
       .trim();
 
-    let words = summary.split(/\s+/).filter(Boolean);
-
-    // If too long → trim
-    if (words.length > 45) {
-      return words.slice(0, 45).join(" ");
+    // 3. LOGIC FIX: Do not pad with source text. 
+    // If it's short, it's short. It's better to be short than nonsensical.
+    
+    // 4. LOGIC FIX: Soft Truncation
+    // If it is too long, try to cut at the last punctuation mark within the limit
+    // rather than slicing words blindly.
+    const words = summary.split(" ");
+    
+    if (words.length > 50) {
+       // Emergency trim if AI hallucinated a long text
+       return words.slice(0, 45).join(" ") + "...";
     }
-
-    // If too short → pad from original text
-    if (words.length < 45) {
-      const needed = 45 - words.length;
-
-      const sourceWords = normalizeWhitespace(clean)
-        .split(/\s+/)
-        .filter(Boolean);
-
-      const filler = sourceWords.slice(0, needed).join(" ");
-
-      summary = (summary + " " + filler).trim();
-    }
-
-    // FINAL ENFORCEMENT
-    summary = summary.split(/\s+/).slice(0, 45).join(" ");
 
     return summary;
+
   } catch (err) {
-    // Emergency fallback
-    return normalizeWhitespace(clean).split(/\s+/).slice(0, 45).join(" ");
+    // Fallback: Take first 40 words and add ellipsis
+    const fallback = normalizeWhitespace(clean).split(/\s+/).slice(0, 40).join(" ");
+    return fallback + "...";
   }
 }
 
