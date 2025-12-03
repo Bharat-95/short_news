@@ -37,7 +37,7 @@ export async function summarizeText(text: string): Promise<string> {
 
   // 1. Tell the AI to be precise, but don't break grammar if it misses by a word.
   const systemPrompt =
-    "You are a news editor. Summarize the provided text into exactly 45 words. Do not exceed 50 words. Ensure the last sentence is complete. No filler, no intro.";
+    "You are a news editor. Summarize the provided text into exactly 40 words. Do not exceed 45 words. Ensure the last sentence is complete. No filler, no intro.";
 
   const userPrompt = `Text to summarize:\n\n${clean}`;
 
