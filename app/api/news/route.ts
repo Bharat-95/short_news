@@ -210,10 +210,10 @@ function pickCandidateFromHomepage(html: string, base: string): string | null {
     if (seen.size > 0) return Array.from(seen)[0];
   }
 
- const first = $("a[href]")
-  .get()
-  .map((n) => makeAbsolute($(n).attr("href") || "", base))
-  .find((u) => u && u.startsWith(base));
+  const first = $("a[href]")
+    .get()
+    .map((n) => makeAbsolute($(n).attr("href") || "", base))
+    .find((u) => u && u.startsWith(base));
   return first || null;
 }
 function extractArticleFromHtml(html: string, base: string) {
@@ -391,6 +391,72 @@ function mapToAllowedCategory(raw?: string | null) {
   )
     return "Health & Fitness";
   return "Miscallenious";
+}
+
+function autoAssignCategories(article: {
+  title: string;
+  description: string;
+  fullText: string;
+  chosenCategory: string;
+}) {
+  const categories = new Set<string>();
+
+  // Always include the main chosen category
+  categories.add(article.chosenCategory);
+
+  const full = (
+    (article.title || "") +
+    " " +
+    (article.description || "") +
+    " " +
+    (article.fullText || "")
+  ).toLowerCase();
+
+  // Finance detection
+  if (
+    full.includes("finance") ||
+    full.includes("financial") ||
+    full.includes("stocks") ||
+    full.includes("economy") ||
+    full.includes("inflation") ||
+    full.includes("bank") ||
+    full.includes("loan") ||
+    full.includes("rupee") ||
+    full.includes("market")
+  ) {
+    categories.add("Finance");
+  }
+
+  // Timeline-style story detection
+  if (
+    full.includes("timeline") ||
+    full.includes("chronology") ||
+    /\b\d{4}\b.*\b\d{4}\b/.test(full) || // Detect multiple years in story
+    full.includes("in the past") ||
+    full.includes("over the years")
+  ) {
+    categories.add("Timeline");
+  }
+
+  // Good news (more friendly version)
+  const positivePattern =
+    /\b(win|wins|won|award|awarded|success|improvement|improved|growth|record high|milestone|achievement|boon|benefit)\b/i;
+  if (positivePattern.test(full)) {
+    categories.add("Good News");
+  }
+
+  // Important / breaking category (Top Stories)
+  if (
+    full.includes("breaking") ||
+    full.includes("urgent") ||
+    full.includes("developing story") ||
+    full.includes("major") ||
+    full.includes("headline")
+  ) {
+    categories.add("Top Stories");
+  }
+
+  return Array.from(categories);
 }
 
 export async function POST(req: Request) {
@@ -620,7 +686,12 @@ export async function POST(req: Request) {
       }
 
       // FIX: categories should only be the final mapped category
-      const categoriesArr: string[] = [chosenCategory];
+      const categoriesArr = autoAssignCategories({
+        title: finalArticle.title || "",
+        description: finalArticle.description || "",
+        fullText: finalArticle.fullText || "",
+        chosenCategory,
+      });
 
       const positivePattern =
         /\b(win|wins|won|award|awarded|success|successful|benefit|benefits|improvement|improved|record high|record-low|reduced|saved|cut|growth|grows|growths|boon|positive)\b/i;
