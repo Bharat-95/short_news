@@ -49,7 +49,9 @@ function normalizeText(s?: string | null) {
   return s
     .replace(/<[^>]*>/g, " ")
     .replace(/[\u2018\u2019\u201c\u201d]/g, "'")
+    .replace(/[^a-z0-9\s]/gi, " ")
     .replace(/\s+/g, " ")
+    .toLowerCase()
     .trim();
 }
 
@@ -245,26 +247,15 @@ function extractArticleFromHtml(html: string, base: string) {
     null;
 
   const articleSelectors = [
-  "article",
-  ".article",
-  ".post",
-  ".post-content",
-  ".entry-content",
-  ".entry-content.clearfix",
-  ".news-content",
-  ".story-content",
-  ".content-body",
-  ".article-content",
-  ".node-content",
-  ".field-item",
-  ".field-items",
-  ".text-content",
-  ".post-body",
-  ".page-content",
-  "#content",
-  "#main-content",
-];
-
+    "article",
+    ".article",
+    ".post",
+    ".post-content",
+    ".entry-content",
+    ".news-content",
+    ".story-content",
+    "#content",
+  ];
   let paragraphs: string[] = [];
   for (const sel of articleSelectors) {
     const el = $(sel);
@@ -320,7 +311,7 @@ async function classifyWithTimeout(text: string, ms = 8000) {
 
 async function isDuplicateTitle(
   candidateTitle: string,
-  threshold = 0.85,
+  threshold = 0.55,
   recentLimit = 500
 ) {
   if (!candidateTitle) return false;
@@ -365,7 +356,7 @@ const ALLOWED_CATEGORIES = [
   "fashion",
   "Education",
   "Health & Fitness",
-  "Good News",
+  "Good News" 
 ];
 
 function mapToAllowedCategory(raw?: string | null) {
@@ -550,7 +541,7 @@ export async function POST(req: Request) {
             const pageHtml = await fetchText(finalArticle.link, pageTimeout);
             if (pageHtml) {
               const ext = extractArticleFromHtml(pageHtml, base);
-              if (ext.fullText && ext.fullText.split(" ").length >= 20) {
+              if (ext.fullText && ext.fullText.length > 40) {
                 finalArticle.fullText = ext.fullText;
                 if (!finalArticle.image && ext.image)
                   finalArticle.image = ext.image;
@@ -578,7 +569,7 @@ export async function POST(req: Request) {
           continue;
         }
         const ext = extractArticleFromHtml(pageHtml, base);
-        if (ext.fullText && ext.fullText.split(" ").length >= 20) {
+        if (ext.fullText && ext.fullText.length > 40) {
           finalArticle = {
             title: ext.title || "",
             link: candidateLink,
@@ -635,7 +626,6 @@ export async function POST(req: Request) {
       let shortDescription = finalArticle.description || "";
 
       // FIX: summary should NOT have "..."
-      // ---- FIXED SUMMARIZATION LOGIC ----
       try {
         const toSummarize =
           finalArticle.fullText ||
@@ -643,8 +633,7 @@ export async function POST(req: Request) {
           finalArticle.title ||
           "";
 
-        // Always summarize if text has at least 10 words
-        if (toSummarize && toSummarize.split(" ").length >= 10) {
+        if (toSummarize && toSummarize.length > 120) {
           const s = await Promise.race([
             summarizeWithTimeout(toSummarize, summarizerTimeout),
             new Promise<string>((res) =>
@@ -655,28 +644,22 @@ export async function POST(req: Request) {
             ),
           ]);
 
-          if (s && typeof s === "string") {
+          if (s && typeof s === "string" && s.trim().length > 0) {
+            // REMOVE ellipsis from final summary
             shortDescription = s
               .replace(/\.\.\.$/, "")
               .replace(/\s+\.\.\.$/, "")
               .trim();
           }
-        } else {
-          // Even if text is very short, still summarize to standardize output
-          const s = await summarizeWithTimeout(toSummarize, summarizerTimeout);
-          if (s && typeof s === "string") {
-            shortDescription = s.trim();
-          }
+        } else if (!shortDescription && finalArticle.fullText) {
+          const trimmed = trimToWords(finalArticle.fullText, 35);
+          shortDescription = trimmed.replace(/\.\.\.$/, "").trim();
         }
       } catch {
-        // Safe fallback
-        const trimmed = trimToWords(
-          finalArticle.fullText ||
-            finalArticle.description ||
-            finalArticle.title,
-          35
-        );
-        shortDescription = trimmed.replace(/\.\.\.$/, "").trim();
+        if (!shortDescription && finalArticle.fullText) {
+          const trimmed = trimToWords(finalArticle.fullText, 35);
+          shortDescription = trimmed.replace(/\.\.\.$/, "").trim();
+        }
       }
 
       // FINAL CLEAN SUMMARY (no ...)
