@@ -245,15 +245,26 @@ function extractArticleFromHtml(html: string, base: string) {
     null;
 
   const articleSelectors = [
-    "article",
-    ".article",
-    ".post",
-    ".post-content",
-    ".entry-content",
-    ".news-content",
-    ".story-content",
-    "#content",
-  ];
+  "article",
+  ".article",
+  ".post",
+  ".post-content",
+  ".entry-content",
+  ".entry-content.clearfix",
+  ".news-content",
+  ".story-content",
+  ".content-body",
+  ".article-content",
+  ".node-content",
+  ".field-item",
+  ".field-items",
+  ".text-content",
+  ".post-body",
+  ".page-content",
+  "#content",
+  "#main-content",
+];
+
   let paragraphs: string[] = [];
   for (const sel of articleSelectors) {
     const el = $(sel);
@@ -309,7 +320,7 @@ async function classifyWithTimeout(text: string, ms = 8000) {
 
 async function isDuplicateTitle(
   candidateTitle: string,
-  threshold = 0.55,
+  threshold = 0.85,
   recentLimit = 500
 ) {
   if (!candidateTitle) return false;
@@ -539,7 +550,7 @@ export async function POST(req: Request) {
             const pageHtml = await fetchText(finalArticle.link, pageTimeout);
             if (pageHtml) {
               const ext = extractArticleFromHtml(pageHtml, base);
-              if (ext.fullText && ext.fullText.length > 40) {
+              if (ext.fullText && ext.fullText.split(" ").length >= 20) {
                 finalArticle.fullText = ext.fullText;
                 if (!finalArticle.image && ext.image)
                   finalArticle.image = ext.image;
@@ -567,7 +578,7 @@ export async function POST(req: Request) {
           continue;
         }
         const ext = extractArticleFromHtml(pageHtml, base);
-        if (ext.fullText && ext.fullText.length > 40) {
+        if (ext.fullText && ext.fullText.split(" ").length >= 20) {
           finalArticle = {
             title: ext.title || "",
             link: candidateLink,
