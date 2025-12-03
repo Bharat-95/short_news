@@ -35,63 +35,52 @@ function trimToWords(text: string, maxWords: number) {
 export async function summarizeText(text: string): Promise<string> {
   const clean = stripHtml(text);
 
-  // 1. Tell the AI to be precise, but don't break grammar if it misses by a word.
-  const systemPrompt =
-    "You are a news editor. Summarize the provided text into exactly 40 words. Do not exceed 45 words. Ensure the last sentence is complete. No filler, no intro.";
+  const systemPrompt = `
+You are a news summarizer.
+Write a concise summary of the text.
+Target: 40–45 words.
+It is OK if it is between 38 and 48 words.
+Always end with a complete sentence.
+Never copy the whole article.
+  `;
 
-  const userPrompt = `Text to summarize:\n\n${clean}`;
+  const userPrompt = `Text:\n${clean}\n\nWrite summary now.`;
 
   try {
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini", // fast and cheap
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      max_tokens: 100, // Give it enough room to finish a sentence
-      temperature: 0.3, // Slightly higher to allow natural flow
+      max_tokens: 200, // <-- FIXED (100 was too small)
+      temperature: 0.2,
     });
 
-    let summary = normalizeWhitespace(
-      completion.choices?.[0]?.message?.content || ""
-    );
+    let summary = completion.choices?.[0]?.message?.content || "";
+    summary = normalizeWhitespace(summary);
 
-    // 2. FIXED REGEX: Added currency symbols ($€£₹) and parentheses/colons
-    // 2. SAFE SANITIZATION (keep accents, keep French characters)
-summary = summary
-  .replace(/\.\.\.$/, "")
-  .replace(/\s+/g, " ")
-  .trim();
+    // Soft word check
+    const words = summary.split(/\s+/);
 
-// 3. HARD WORD LIMIT: cut at last full stop before 45 words
-const words = summary.split(" ");
+    if (words.length > 48) {
+      // Trim to max 45–48 words, cut cleanly
+      const trimmed = words.slice(0, 45).join(" ");
+      const lastPeriod = trimmed.lastIndexOf(".");
+      if (lastPeriod !== -1) summary = trimmed.slice(0, lastPeriod + 1);
+      else summary = trimmed + ".";
+    }
 
-if (words.length > 45) {
-  // Find last punctuation before 45 words
-  const first45 = words.slice(0, 45).join(" ");
-  const cutIndex = first45.lastIndexOf(".");
-  
-  if (cutIndex !== -1) {
-    summary = first45.slice(0, cutIndex + 1).trim();
-  } else {
-    summary = first45.trim();
-  }
-}
+    // Guarantee a period
+    if (!summary.endsWith(".")) summary += ".";
 
-// 4. Guarantee full stop at the end
-if (!summary.endsWith(".")) {
-  summary += ".";
-}
-
-return summary;
-
-
+    return summary;
   } catch (err) {
-    // Fallback: Take first 40 words and add ellipsis
-    const fallback = normalizeWhitespace(clean).split(/\s+/).slice(0, 40).join(" ");
-    return fallback + "...";
+    // Fallback extract first 40 words
+    return clean.split(/\s+/).slice(0, 40).join(" ") + "...";
   }
 }
+
 
 /* -----------------------------------------------------------
    CATEGORY CLASSIFIER
