@@ -33,63 +33,47 @@ function trimToWords(text: string, maxWords: number) {
 ----------------------------------------------------------- */
 
 export async function summarizeText(text: string): Promise<string> {
-  const clean = stripHtml(text);
+  const clean = stripHtml(text).slice(0, 5000);
 
-  const systemPrompt =
-    "You are a concise news writer. Output EXACTLY 45 words. One paragraph. No bullets. No titles. No ellipses. No emojis. No filler.";
+  const systemPrompt = `
+    You are a professional news summarizer.
+    Write EXACTLY 45 words.
+    One paragraph.
+    No bullets. No headings. No emojis. No filler.
+    Must be a complete, grammatical paragraph.
+  `;
 
-  const userPrompt = `Summarize the following article into EXACTLY 45 words:\n\n${clean}`;
+  const userPrompt = `Summarize the following news into exactly 45 words:\n\n${clean}`;
 
-  try {
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      max_tokens: 150,
-      temperature: 0.2,
-    });
+  const completion = await client.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt }
+    ],
+    max_tokens: 200,
+    temperature: 0.2,
+  });
 
-    let summary = normalizeWhitespace(
-      completion.choices?.[0]?.message?.content || ""
-    );
+  let output = normalizeWhitespace(
+    completion.choices?.[0]?.message?.content || ""
+  );
 
-    // Improved cleanup: keeps %, !, ?, quotes, dashes
-    summary = summary
-      .replace(/\.\.\.$/, "") // remove accidental ...
-      .replace(/[^\w\s.,\-'"%!?/]/g, "") // allow more natural punctuation
-      .trim();
+  // Word-enforce but without breaking sentences badly
+  const words = output.split(/\s+/);
 
-    let words = summary.split(/\s+/).filter(Boolean);
+  if (words.length === 45) return output;
 
-    // If too long → trim
-    if (words.length > 45) {
-      return words.slice(0, 45).join(" ");
-    }
-
-    // If too short → pad from original text
-    if (words.length < 45) {
-      const needed = 45 - words.length;
-
-      const sourceWords = normalizeWhitespace(clean)
-        .split(/\s+/)
-        .filter(Boolean);
-
-      const filler = sourceWords.slice(0, needed).join(" ");
-
-      summary = (summary + " " + filler).trim();
-    }
-
-    // FINAL ENFORCEMENT
-    summary = summary.split(/\s+/).slice(0, 45).join(" ");
-
-    return summary;
-  } catch (err) {
-    // Emergency fallback
-    return normalizeWhitespace(clean).split(/\s+/).slice(0, 45).join(" ");
+  if (words.length > 45) {
+    return words.slice(0, 45).join(" ");
   }
+
+  // If too short, pad with more natural words from original text
+  const needed = 45 - words.length;
+  const sourceWords = clean.split(/\s+/).slice(0, needed);
+  return (output + " " + sourceWords.join(" ")).trim();
 }
+
 
 /* -----------------------------------------------------------
    CATEGORY CLASSIFIER
