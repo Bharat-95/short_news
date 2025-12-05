@@ -1,13 +1,19 @@
 // app/api/cron/fetch-news/route.ts
-export const runtime = "edge";
+import { NextResponse } from "next/server";
 
-export async function GET() {
-  const url = `${process.env.NEXT_PUBLIC_BASE_URL}/api/news`;
+export async function GET(req: Request) {
+  const auth = req.headers.get("Authorization");
+  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-  const res = await fetch(url, { method: "POST" });
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL!;
+  const res = await fetch(`${baseUrl}/api/news`, { method: "POST" });
   const json = await res.json();
 
-  return new Response(JSON.stringify(json), {
-    headers: { "Content-Type": "application/json" }
+  return NextResponse.json({
+    ok: true,
+    triggered: new Date().toISOString(),
+    newsResponse: json
   });
 }
