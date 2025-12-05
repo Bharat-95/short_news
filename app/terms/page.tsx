@@ -35,7 +35,7 @@ export default function TermsAndConditions() {
         </div>
 
         <div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">3. User Responsibilities</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">3. User responsibilities</h2>
           <ul className="list-disc list-inside text-gray-600 space-y-2">
             <li>You agree to use BrefNews only for lawful purposes.</li>
             <li>You will not misuse or attempt to disrupt the Service in any way.</li>
