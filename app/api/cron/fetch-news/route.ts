@@ -2,11 +2,9 @@
 export const runtime = "edge";
 
 export async function GET() {
-  const res = await fetch(
-    `${process.env.NEXT_PUBLIC_BASE_URL}/api/news`,
-    { method: "POST" }
-  );
+  const url = `${process.env.NEXT_PUBLIC_BASE_URL}/api/news`;
 
+  const res = await fetch(url, { method: "POST" });
   const json = await res.json();
 
   return new Response(JSON.stringify(json), {
