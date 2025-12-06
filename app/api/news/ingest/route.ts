@@ -1,5 +1,3 @@
-// app/api/news/ingest/route.ts
-
 import { NextResponse } from "next/server";
 import { httpGet } from "@/lib/utils/http";
 import { absoluteUrl, cleanUrl } from "@/lib/utils/url";
@@ -9,6 +7,7 @@ import { summarizeNews } from "@/lib/services/summarizer";
 import { classifyNews } from "@/lib/services/classifier";
 import { generateHeadline } from "@/lib/services/headline";
 import { isDuplicateTitle, isDuplicateUrl } from "@/lib/services/dedupe";
+import { mapToAllowedCategory } from "@/lib/services/categoryMap";
 import { supabaseBrowser } from "@/lib/db";
 
 const SITES = [
@@ -142,9 +141,13 @@ export async function POST(req: Request) {
         if (await isDuplicateTitle(extracted.title)) continue;
 
         const summary = await summarizeNews(extracted.fullText);
-        const category = await classifyNews(
+
+        const rawCategory = await classifyNews(
           extracted.fullText || extracted.title
         );
+
+        const category = mapToAllowedCategory(rawCategory);
+
         const headlineObj = await generateHeadline(
           extracted.title + "\n\n" + summary
         );
@@ -154,6 +157,16 @@ export async function POST(req: Request) {
           extracted.image ||
           null;
 
+        const categoriesArr: string[] = ["Top Stories", category];
+
+        if (category === "Business") categoriesArr.push("Finance");
+
+        const positivePattern =
+          /\b(win|wins|won|award|awarded|success|successful|benefit|improvement|improved|record high|record low|positive|growth|gains|reduced|saved|cut)\b/i;
+        if (positivePattern.test(extracted.fullText)) {
+          categoriesArr.push("Good News");
+        }
+
         const payload = {
           title: extracted.title,
           summary,
@@ -161,7 +174,7 @@ export async function POST(req: Request) {
           source_url: cleanedUrl,
           source: site.source,
           topics: category,
-          categories: [category],
+          categories: categoriesArr,
           headline: headlineObj,
           pub_date: extracted.pubDate ?? null,
         };
