@@ -1,17 +1,14 @@
 // app/api/news/ingest/route.ts
 
 import { NextResponse } from "next/server";
-
 import { httpGet } from "@/lib/utils/http";
 import { absoluteUrl, cleanUrl } from "@/lib/utils/url";
 import { logError, logSiteStep } from "@/lib/utils/logging";
-
 import { extractArticle } from "@/lib/extractors/articleExtractor";
 import { summarizeNews } from "@/lib/services/summarizer";
 import { classifyNews } from "@/lib/services/classifier";
 import { generateHeadline } from "@/lib/services/headline";
 import { isDuplicateTitle, isDuplicateUrl } from "@/lib/services/dedupe";
-
 import { supabaseBrowser } from "@/lib/db";
 
 const SITES = [
@@ -56,15 +53,32 @@ async function getRssImages(rssUrl: string) {
       const link = $(item).find("link").first().text().trim();
       const enclosure = $(item).find("enclosure").attr("url");
       const media = $(item).find("media\\:content").attr("url");
-
-      const finalImg = media || enclosure;
-      if (link && finalImg) map[cleanUrl(link)] = finalImg;
+      const img = media || enclosure;
+      if (link && img) map[cleanUrl(link)] = img;
     });
 
     return map;
   } catch {
     return {};
   }
+}
+
+function findClosestRssImage(articleUrl: string, rssMap: Record<string, string>) {
+  const a = cleanUrl(articleUrl).toLowerCase();
+  if (rssMap[a]) return rssMap[a];
+
+  for (const key in rssMap) {
+    const k = cleanUrl(key).toLowerCase();
+    if (a.includes(k) || k.includes(a)) return rssMap[key];
+  }
+
+  const endA = a.split("/").pop();
+  for (const key in rssMap) {
+    const endK = cleanUrl(key).toLowerCase().split("/").pop();
+    if (endA && endK && endA === endK) return rssMap[key];
+  }
+
+  return null;
 }
 
 async function getHomepageLinks(base: string): Promise<string[]> {
@@ -136,7 +150,9 @@ export async function POST(req: Request) {
         );
 
         const finalImage =
-          rssImages[cleanedUrl] || extracted.image || null;
+          findClosestRssImage(cleanedUrl, rssImages) ||
+          extracted.image ||
+          null;
 
         const payload = {
           title: extracted.title,
