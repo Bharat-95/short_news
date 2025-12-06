@@ -1,7 +1,6 @@
 // lib/services/categoryMap.ts
 
 export const ALLOWED_CATEGORIES = [
-  "India",
   "Business",
   "Politics",
   "Sports",

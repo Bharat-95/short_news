@@ -5,37 +5,34 @@ import { logError, logSiteStep } from "@/lib/utils/logging";
 import { extractArticle } from "@/lib/extractors/articleExtractor";
 import { summarizeNews } from "@/lib/services/summarizer";
 import { classifyNews } from "@/lib/services/classifier";
-import { generateHeadline } from "@/lib/services/headline";
-import { isDuplicateTitle, isDuplicateUrl } from "@/lib/services/dedupe";
-import { mapToAllowedCategory } from "@/lib/services/categoryMap";
 import { supabaseBrowser } from "@/lib/db";
 
 const SITES = [
   {
     source: "Defi Media Group",
     base: "https://defimedia.info",
-    rss: "https://defimedia.info/rss.xml",
+    rss: "https://defimedia.info/rss.xml"
   },
   {
     source: "Mauritius Broadcasting",
     base: "https://mbc.intnet.mu",
-    rss: "https://mbc.intnet.mu/feed/",
+    rss: "https://mbc.intnet.mu/feed/"
   },
   {
     source: "Le Mauricien",
     base: "https://lemauricien.com",
-    rss: "https://www.lemauricien.com/feed/",
+    rss: "https://www.lemauricien.com/feed/"
   },
   {
     source: "Inside News",
     base: "https://www.insideedition.com/",
-    rss: "https://www.insideedition.com/rss",
+    rss: "https://www.insideedition.com/rss"
   },
   {
     source: "NewsMoris",
     base: "https://newsmoris.com",
-    rss: "https://newsmoris.com/feed/",
-  },
+    rss: "https://newsmoris.com/feed/"
+  }
 ];
 
 async function getRssImages(rssUrl: string) {
@@ -50,8 +47,8 @@ async function getRssImages(rssUrl: string) {
 
     $("item").each((_, item) => {
       const link = $(item).find("link").first().text().trim();
-      const enclosure = $(item).find("enclosure").attr("url");
       const media = $(item).find("media\\:content").attr("url");
+      const enclosure = $(item).find("enclosure").attr("url");
       const img = media || enclosure;
       if (link && img) map[cleanUrl(link)] = img;
     });
@@ -62,19 +59,19 @@ async function getRssImages(rssUrl: string) {
   }
 }
 
-function findClosestRssImage(articleUrl: string, rssMap: Record<string, string>) {
+function findClosestRssImage(articleUrl: string, rssMap: Record<string,string>) {
   const a = cleanUrl(articleUrl).toLowerCase();
   if (rssMap[a]) return rssMap[a];
 
-  for (const key in rssMap) {
-    const k = cleanUrl(key).toLowerCase();
-    if (a.includes(k) || k.includes(a)) return rssMap[key];
+  for (const k in rssMap) {
+    const key = cleanUrl(k).toLowerCase();
+    if (a.includes(key) || key.includes(a)) return rssMap[k];
   }
 
   const endA = a.split("/").pop();
-  for (const key in rssMap) {
-    const endK = cleanUrl(key).toLowerCase().split("/").pop();
-    if (endA && endK && endA === endK) return rssMap[key];
+  for (const k in rssMap) {
+    const endK = cleanUrl(k).toLowerCase().split("/").pop();
+    if (endA === endK) return rssMap[k];
   }
 
   return null;
@@ -87,7 +84,7 @@ async function getHomepageLinks(base: string): Promise<string[]> {
   const cheerio = await import("cheerio");
   const $ = cheerio.load(html);
 
-  const links = new Set<string>();
+  const set = new Set<string>();
 
   $("a").each((_, el) => {
     const href = $(el).attr("href");
@@ -104,11 +101,11 @@ async function getHomepageLinks(base: string): Promise<string[]> {
       /\/article\//i.test(abs) ||
       /-[0-9]{3,}$/.test(abs)
     ) {
-      links.add(abs);
+      set.add(abs);
     }
   });
 
-  return [...links].slice(0, 10);
+  return [...set].slice(0, 12);
 }
 
 export async function POST(req: Request) {
@@ -117,66 +114,44 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let diagnostics: any[] = [];
+  let diagnostics = [];
 
   for (const site of SITES) {
     try {
-      logSiteStep(site.source, "FETCHING RSS IMAGES");
+      logSiteStep(site.source, "RSS IMAGES");
       const rssImages = site.rss ? await getRssImages(site.rss) : {};
 
-      logSiteStep(site.source, "FETCHING HOMEPAGE");
+      logSiteStep(site.source, "HOMEPAGE");
       const links = await getHomepageLinks(site.base);
-      diagnostics.push({ site: site.source, found: links.length });
+      diagnostics.push({ site: site.source, links: links.length });
 
       for (const url of links) {
-        const cleanedUrl = cleanUrl(url);
+        const cleaned = cleanUrl(url);
 
-        if (await isDuplicateUrl(cleanedUrl)) continue;
-
-        logSiteStep(site.source, "TRY ARTICLE", cleanedUrl);
-
-        const extracted = await extractArticle(cleanedUrl, site.base);
+        logSiteStep(site.source, "ARTICLE", cleaned);
+        const extracted = await extractArticle(cleaned, site.base);
         if (!extracted || !extracted.fullText) continue;
 
-        if (await isDuplicateTitle(extracted.title)) continue;
-
         const summary = await summarizeNews(extracted.fullText);
-
-        const rawCategory = await classifyNews(
-          extracted.fullText || extracted.title
-        );
-
-        const category = mapToAllowedCategory(rawCategory);
-
-        const headlineObj = await generateHeadline(
-          extracted.title + "\n\n" + summary
-        );
+        const topic = await classifyNews(extracted.fullText);
 
         const finalImage =
-          findClosestRssImage(cleanedUrl, rssImages) ||
+          findClosestRssImage(cleaned, rssImages) ||
           extracted.image ||
           null;
 
-        const categoriesArr: string[] = ["Top Stories", category];
-
-        if (category === "Business") categoriesArr.push("Finance");
-
-        const positivePattern =
-          /\b(win|wins|won|award|awarded|success|successful|benefit|improvement|improved|record high|record low|positive|growth|gains|reduced|saved|cut)\b/i;
-        if (positivePattern.test(extracted.fullText)) {
-          categoriesArr.push("Good News");
-        }
+        const categories = ["Top Stories", topic];
 
         const payload = {
           title: extracted.title,
           summary,
           image_url: finalImage,
-          source_url: cleanedUrl,
+          source_url: cleaned,
           source: site.source,
-          topics: category,
-          categories: categoriesArr,
-          headline: headlineObj,
-          pub_date: extracted.pubDate ?? null,
+          topics: topic,
+          categories,
+          headline: extracted.title,
+          pub_date: extracted.pubDate ?? null
         };
 
         const { error } = await supabaseBrowser
@@ -184,32 +159,24 @@ export async function POST(req: Request) {
           .insert(payload);
 
         if (!error) {
-          logSiteStep(site.source, "INSERTED", cleanedUrl);
           return NextResponse.json(
             {
               ok: true,
               inserted: payload,
               diagnostics,
-              message: "Inserted ONE article and stopped",
+              message: "Inserted ONE article"
             },
             { status: 200 }
           );
         }
-
-        logError(site.source, "DB INSERT FAILED", error);
       }
     } catch (err) {
-      logError(site.source, "SITE FAILED", err);
       continue;
     }
   }
 
   return NextResponse.json(
-    {
-      ok: false,
-      message: "No new article found",
-      diagnostics,
-    },
+    { ok: false, diagnostics, message: "No new article" },
     { status: 422 }
   );
 }
