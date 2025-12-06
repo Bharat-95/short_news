@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { httpGet } from "@/lib/utils/http";
 import { absoluteUrl, cleanUrl } from "@/lib/utils/url";
-import { logError, logSiteStep } from "@/lib/utils/logging";
 import { extractArticle } from "@/lib/extractors/articleExtractor";
 import { summarizeNews } from "@/lib/services/summarizer";
 import { classifyNews } from "@/lib/services/classifier";
 import { generateHeadline } from "@/lib/services/headline";
-import { isDuplicateTitle, isDuplicateUrl } from "@/lib/services/dedupe";
 import { mapToAllowedCategory } from "@/lib/services/categoryMap";
+import { isDuplicateUrl, isDuplicateTitle } from "@/lib/services/dedupe";
 import { supabaseBrowser } from "@/lib/db";
+import * as cheerio from "cheerio";
 
 const SITES = [
   {
@@ -38,66 +38,46 @@ const SITES = [
   },
 ];
 
-async function getRssImages(rssUrl: string) {
+async function getRssMap(rssUrl: string) {
   try {
     const xml = await httpGet(rssUrl);
     if (!xml) return {};
-
-    const cheerio = await import("cheerio");
     const $ = cheerio.load(xml, { xmlMode: true });
-
-    const map: Record<string, string> = {};
-
-    $("item").each((_, item) => {
-      const link = $(item).find("link").first().text().trim();
-      const enclosure = $(item).find("enclosure").attr("url");
-      const media = $(item).find("media\\:content").attr("url");
+    const out: Record<string, string> = {};
+    $("item").each((_, el) => {
+      const link = $(el).find("link").first().text().trim();
+      const enclosure = $(el).find("enclosure").attr("url");
+      const media = $(el).find("media\\:content").attr("url");
       const img = media || enclosure;
-      if (link && img) map[cleanUrl(link)] = img;
+      if (link && img) out[cleanUrl(link)] = img;
     });
-
-    return map;
+    return out;
   } catch {
     return {};
   }
 }
 
-function findClosestRssImage(articleUrl: string, rssMap: Record<string, string>) {
-  const a = cleanUrl(articleUrl).toLowerCase();
-  if (rssMap[a]) return rssMap[a];
-
-  for (const key in rssMap) {
-    const k = cleanUrl(key).toLowerCase();
-    if (a.includes(k) || k.includes(a)) return rssMap[key];
+function findImage(url: string, map: Record<string, string>) {
+  if (map[cleanUrl(url)]) return map[cleanUrl(url)];
+  const last = cleanUrl(url).split("/").pop();
+  for (const key in map) {
+    const keyLast = cleanUrl(key).split("/").pop();
+    if (keyLast === last) return map[key];
   }
-
-  const endA = a.split("/").pop();
-  for (const key in rssMap) {
-    const endK = cleanUrl(key).toLowerCase().split("/").pop();
-    if (endA && endK && endA === endK) return rssMap[key];
-  }
-
   return null;
 }
 
-async function getHomepageLinks(base: string): Promise<string[]> {
+async function getHomepageLinks(base: string) {
   const html = await httpGet(base);
   if (!html) return [];
-
-  const cheerio = await import("cheerio");
   const $ = cheerio.load(html);
-
   const links = new Set<string>();
-
   $("a").each((_, el) => {
     const href = $(el).attr("href");
     if (!href) return;
-
     let abs = absoluteUrl(href, base);
     abs = cleanUrl(abs);
-
     if (!abs.startsWith(base)) return;
-
     if (
       /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) ||
       /\/news\//i.test(abs) ||
@@ -107,7 +87,6 @@ async function getHomepageLinks(base: string): Promise<string[]> {
       links.add(abs);
     }
   });
-
   return [...links].slice(0, 10);
 }
 
@@ -117,65 +96,60 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let diagnostics: any[] = [];
-
   for (const site of SITES) {
     try {
-      logSiteStep(site.source, "FETCHING RSS IMAGES");
-      const rssImages = site.rss ? await getRssImages(site.rss) : {};
-
-      logSiteStep(site.source, "FETCHING HOMEPAGE");
+      const rssImages = site.rss ? await getRssMap(site.rss) : {};
       const links = await getHomepageLinks(site.base);
-      diagnostics.push({ site: site.source, found: links.length });
 
       for (const url of links) {
-        const cleanedUrl = cleanUrl(url);
+        const cleaned = cleanUrl(url);
+        if (await isDuplicateUrl(cleaned)) continue;
 
-        if (await isDuplicateUrl(cleanedUrl)) continue;
-
-        logSiteStep(site.source, "TRY ARTICLE", cleanedUrl);
-
-        const extracted = await extractArticle(cleanedUrl, site.base);
+        const extracted = await extractArticle(cleaned, site.base);
         if (!extracted || !extracted.fullText) continue;
 
         if (await isDuplicateTitle(extracted.title)) continue;
 
         const summary = await summarizeNews(extracted.fullText);
 
-        const rawCategory = await classifyNews(
+        const rawCat = await classifyNews(
           extracted.fullText || extracted.title
         );
 
-        const category = mapToAllowedCategory(rawCategory);
+        const category = mapToAllowedCategory(rawCat);
 
-        const headlineObj = await generateHeadline(
+        const headline = await generateHeadline(
           extracted.title + "\n\n" + summary
         );
 
-        const finalImage =
-          findClosestRssImage(cleanedUrl, rssImages) ||
+        const img =
+          findImage(cleaned, rssImages) ||
           extracted.image ||
           null;
 
-        const categoriesArr: string[] = ["Top Stories", category];
+        const categoriesArr = [category];
+
+        const isBreaking =
+          extracted.title.toLowerCase().includes("breaking") ||
+          summary.toLowerCase().includes("breaking") ||
+          extracted.fullText.slice(0, 180).toLowerCase().includes("breaking");
+
+        if (isBreaking) categoriesArr.push("Top News");
 
         if (category === "Business") categoriesArr.push("Finance");
 
-        const positivePattern =
-          /\b(win|wins|won|award|awarded|success|successful|benefit|improvement|improved|record high|record low|positive|growth|gains|reduced|saved|cut)\b/i;
-        if (positivePattern.test(extracted.fullText)) {
-          categoriesArr.push("Good News");
-        }
+        const positive = /\b(win|wins|award|success|growth|improved|positive|record high)\b/i;
+        if (positive.test(extracted.fullText)) categoriesArr.push("Good News");
 
         const payload = {
           title: extracted.title,
           summary,
-          image_url: finalImage,
-          source_url: cleanedUrl,
+          image_url: img,
+          source_url: cleaned,
           source: site.source,
           topics: category,
           categories: categoriesArr,
-          headline: headlineObj,
+          headline,
           pub_date: extracted.pubDate ?? null,
         };
 
@@ -184,32 +158,21 @@ export async function POST(req: Request) {
           .insert(payload);
 
         if (!error) {
-          logSiteStep(site.source, "INSERTED", cleanedUrl);
           return NextResponse.json(
             {
               ok: true,
               inserted: payload,
-              diagnostics,
-              message: "Inserted ONE article and stopped",
+              message: "Inserted one Mauritius article",
             },
             { status: 200 }
           );
         }
-
-        logError(site.source, "DB INSERT FAILED", error);
       }
-    } catch (err) {
-      logError(site.source, "SITE FAILED", err);
-      continue;
-    }
+    } catch {}
   }
 
   return NextResponse.json(
-    {
-      ok: false,
-      message: "No new article found",
-      diagnostics,
-    },
+    { ok: false, message: "No new article found" },
     { status: 422 }
   );
 }
