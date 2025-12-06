@@ -1,36 +1,55 @@
-// lib/services/classifier.ts
 import OpenAI from "openai";
-import { stripHtml } from "../utils/normalize";
-import { mapToAllowedCategory } from "./categoryMap";
+import { normalizeWhitespace } from "../utils/normalize";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
+const CATEGORIES = [
+  "Politics",
+  "Sports",
+  "International",
+  "Business",
+  "Technology",
+  "Science",
+  "Automobile",
+  "Health & Fitness",
+  "Education",
+  "Fashion",
+  "Entertainment",
+  "Travel",
+  "Startups",
+  "Crime",
+  "Weather",
+  "Environment",
+  "Miscellaneous"
+];
+
 export async function classifyNews(text: string): Promise<string> {
-  const clean = stripHtml(text).slice(0, 4000);
-
   const prompt = `
-Classify the following news into EXACTLY one category:
-India, Business, Politics, Sports, Technology, Startups, Entertainment,
-International, Automobile, Science, Travel, Miscellaneous, Fashion,
-Education, Health & Fitness, Good News, Timeline.
+Classify the following news article into the SINGLE best category.
+Return only one of these exact labels:
 
-Return ONLY the category name.
+${CATEGORIES.join(", ")}
 
-NEWS:
-${clean}
+Article:
+${normalizeWhitespace(text)}
 `;
 
   try {
-    const resp = await client.chat.completions.create({
+    const res = await client.chat.completions.create({
       model: "gpt-4o-mini",
-      temperature: 0.0,
-      max_tokens: 20,
+      max_tokens: 10,
+      temperature: 0,
       messages: [{ role: "user", content: prompt }],
     });
 
-    const raw = resp.choices?.[0]?.message?.content?.trim() || "";
-    return mapToAllowedCategory(raw);
-  } catch (err) {
+    const output = normalizeWhitespace(res.choices[0].message.content || "");
+
+    for (const c of CATEGORIES) {
+      if (output.toLowerCase().includes(c.toLowerCase())) return c;
+    }
+
+    return "Miscellaneous";
+  } catch (e) {
     return "Miscellaneous";
   }
 }
