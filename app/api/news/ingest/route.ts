@@ -15,16 +15,58 @@ import { isDuplicateTitle, isDuplicateUrl } from "@/lib/services/dedupe";
 import { supabaseBrowser } from "@/lib/db";
 
 const SITES = [
-   { source: "Defi Media Group", base: "https://defimedia.info" },
-  { source: "Mauritius Broadcasting", base: "https://mbc.intnet.mu" },
-  { source: "Le Mauricien", base: "https://lemauricien.com" },
-  { source: "Inside News", base: "https://www.insideedition.com/" },
-  { source: "NewsMoris", base: "https://newsmoris.com" },
+  {
+    source: "Defi Media Group",
+    base: "https://defimedia.info",
+    rss: "https://defimedia.info/rss.xml",
+  },
+  {
+    source: "Mauritius Broadcasting",
+    base: "https://mbc.intnet.mu",
+    rss: "https://mbc.intnet.mu/feed/",
+  },
+  {
+    source: "Le Mauricien",
+    base: "https://lemauricien.com",
+    rss: "https://www.lemauricien.com/feed/",
+  },
+  {
+    source: "Inside News",
+    base: "https://www.insideedition.com/",
+    rss: "https://www.insideedition.com/rss",
+  },
+  {
+    source: "NewsMoris",
+    base: "https://newsmoris.com",
+    rss: "https://newsmoris.com/feed/",
+  },
 ];
 
-// --------------------------------------------------------
-// Return only first valid homepage article
-// --------------------------------------------------------
+async function getRssImages(rssUrl: string) {
+  try {
+    const xml = await httpGet(rssUrl);
+    if (!xml) return {};
+
+    const cheerio = await import("cheerio");
+    const $ = cheerio.load(xml, { xmlMode: true });
+
+    const map: Record<string, string> = {};
+
+    $("item").each((_, item) => {
+      const link = $(item).find("link").first().text().trim();
+      const enclosure = $(item).find("enclosure").attr("url");
+      const media = $(item).find("media\\:content").attr("url");
+
+      const finalImg = media || enclosure;
+      if (link && finalImg) map[cleanUrl(link)] = finalImg;
+    });
+
+    return map;
+  } catch {
+    return {};
+  }
+}
+
 async function getHomepageLinks(base: string): Promise<string[]> {
   const html = await httpGet(base);
   if (!html) return [];
@@ -56,10 +98,6 @@ async function getHomepageLinks(base: string): Promise<string[]> {
   return [...links].slice(0, 10);
 }
 
-
-// --------------------------------------------------------
-// MAIN INGESTION — ONE ARTICLE ONLY
-// --------------------------------------------------------
 export async function POST(req: Request) {
   const auth = req.headers.get("Authorization");
   if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -70,16 +108,16 @@ export async function POST(req: Request) {
 
   for (const site of SITES) {
     try {
-      logSiteStep(site.source, "FETCHING HOMEPAGE");
+      logSiteStep(site.source, "FETCHING RSS IMAGES");
+      const rssImages = site.rss ? await getRssImages(site.rss) : {};
 
+      logSiteStep(site.source, "FETCHING HOMEPAGE");
       const links = await getHomepageLinks(site.base);
       diagnostics.push({ site: site.source, found: links.length });
 
-      // Try links in order → as soon as FIRST real article found → insert → STOP
       for (const url of links) {
         const cleanedUrl = cleanUrl(url);
 
-        // Skip duplicate URLs
         if (await isDuplicateUrl(cleanedUrl)) continue;
 
         logSiteStep(site.source, "TRY ARTICLE", cleanedUrl);
@@ -87,27 +125,23 @@ export async function POST(req: Request) {
         const extracted = await extractArticle(cleanedUrl, site.base);
         if (!extracted || !extracted.fullText) continue;
 
-        // Skip duplicate titles
         if (await isDuplicateTitle(extracted.title)) continue;
 
-        // Summarize
         const summary = await summarizeNews(extracted.fullText);
-
-        // Classify
         const category = await classifyNews(
           extracted.fullText || extracted.title
         );
-
-        // Headline
         const headlineObj = await generateHeadline(
           extracted.title + "\n\n" + summary
         );
 
-        // Build row
+        const finalImage =
+          rssImages[cleanedUrl] || extracted.image || null;
+
         const payload = {
           title: extracted.title,
           summary,
-          image_url: extracted.image ?? null,
+          image_url: finalImage,
           source_url: cleanedUrl,
           source: site.source,
           topics: category,
@@ -116,21 +150,18 @@ export async function POST(req: Request) {
           pub_date: extracted.pubDate ?? null,
         };
 
-        // Insert into Supabase
         const { error } = await supabaseBrowser
           .from("news_articles")
           .insert(payload);
 
         if (!error) {
           logSiteStep(site.source, "INSERTED", cleanedUrl);
-
-          // RETURN IMMEDIATELY — ONLY 1 per cron run
           return NextResponse.json(
             {
               ok: true,
               inserted: payload,
               diagnostics,
-              message: "Inserted ONE article and stopped (as designed)",
+              message: "Inserted ONE article and stopped",
             },
             { status: 200 }
           );
@@ -147,7 +178,7 @@ export async function POST(req: Request) {
   return NextResponse.json(
     {
       ok: false,
-      message: "No new article found from any site",
+      message: "No new article found",
       diagnostics,
     },
     { status: 422 }
