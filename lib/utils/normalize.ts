@@ -15,7 +15,6 @@ export function stripHtml(input?: string | null) {
 export function normalizeWhitespace(s: string) {
   return s.replace(/\s+/g, " ").trim();
 }
-
 /** Trim to specific number of words */
 export function trimToWords(text: string, maxWords: number) {
   if (!text) return "";
@@ -29,14 +28,11 @@ export function firstNWords(text: string, n: number) {
 }
 
 /** Fully clean & sanitize extracted article text */
-export function cleanText(s?: string | null) {
-  if (!s) return "";
+export function cleanText(input?: string | null) {
+  if (!input) return "";
 
-  const cleaned = stripHtml(s)
-    .replace(/[\u2018\u2019\u201c\u201d]/g, "'")  // smart quotes
-    .replace(/[^a-zA-Z0-9\s.,!?'"-]/g, " ")     // keep readable chars
-    .replace(/\s+/g, " ")                       // collapse spaces
+  return stripHtml(input)
+    .replace(/[\u0000-\u001F]+/g, " ")   // remove control chars
+    .replace(/\s+/g, " ")                // normalize spaces
     .trim();
-
-  return cleaned;
 }

@@ -17,47 +17,45 @@ function wordCount(text: string) {
   return normalizeWhitespace(text).split(" ").filter(Boolean).length;
 }
 
-/** Detect if model copied article intro */
+/** Detect if summary copied article intro */
 function looksCopied(summary: string, article: string): boolean {
   const cleanSummary = normalizeWhitespace(summary).toLowerCase();
   const cleanArticle = normalizeWhitespace(article).toLowerCase();
 
-  // Check if first 10–15 words appear in order inside the article
   const firstWords = cleanSummary.split(" ").slice(0, 12).join(" ");
-
   return cleanArticle.includes(firstWords);
 }
 
-/** Core summarizer function */
+/** Core LLM summarizer */
 async function generateSummary(clean: string) {
   const systemPrompt = `
-You are an expert news summarizer.
-Your job is to rewrite the entire article into a **concise factual summary**.
+You are an expert multilingual news summarizer.
+You handle English, French, Creole, and mixed-language articles.
 
-STRICT RULES:
-- Output MUST be a rewritten summary, NOT copied sentences.
-- ABSOLUTELY NO COPYING from the article.
+RULES:
+- Rewrite the article into a **concise, factual summary**.
+- MUST be **fresh wording**, no copying from the article.
 - NO MORE THAN 60 WORDS.
+- Use the SAME LANGUAGE as the original article (French → French summary).
 - ONE paragraph only.
-- Must rewrite in fresh journalistic language.
 - No ellipses (...), no emojis, no filler.
-- Include ONLY the key facts.
+- Include only the essential facts.
 `;
 
   const userPrompt = `
-Summarize the following news article into a maximum of 60 words.
-Do NOT copy any sentences from the article. Write a fresh summary:
+Summarize the following article in **max 60 words**.
+Do NOT copy sentences. Rewrite fully.
 
-ARTICLE:
+Article:
 ${clean}
 `;
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
-    temperature: 0.35,
-    max_tokens: 140,
-    presence_penalty: 0.8,  // discourage repetition
-    frequency_penalty: 1.1, // discourage copying
+    temperature: 0.4,
+    max_tokens: 160,
+    presence_penalty: 0.8,
+    frequency_penalty: 1.1,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
@@ -67,35 +65,30 @@ ${clean}
   return normalizeWhitespace(response.choices?.[0]?.message?.content || "");
 }
 
-/** Main exported function */
+/** Main exported summarizer */
 export async function summarizeNews(rawText: string): Promise<string> {
   const clean = stripHtml(rawText).slice(0, 8000);
 
   try {
     // First attempt
     let summary = await generateSummary(clean);
-
-    // Enforce word limit
     summary = trimToWords(summary, MAX_WORDS);
 
-    // REGENERATE if:
-    // - too short (bad summary)
-    // - copied from article
+    // Regenerate if too short or copied
     if (wordCount(summary) < 15 || looksCopied(summary, clean)) {
-      const secondTry = await generateSummary(clean);
-      summary = trimToWords(secondTry, MAX_WORDS);
+      let second = await generateSummary(clean);
+      second = trimToWords(second, MAX_WORDS);
 
-      // If still bad → fallback rewrite method
-      if (wordCount(summary) < 12 || looksCopied(summary, clean)) {
-        // final safe fallback: compress manually
-        const words = normalizeWhitespace(clean).split(" ").slice(0, MAX_WORDS);
-        return words.join(" ");
+      if (wordCount(second) < 12 || looksCopied(second, clean)) {
+        // final fallback
+        return trimToWords(clean, MAX_WORDS);
       }
+
+      return second;
     }
 
     return summary;
   } catch (err) {
-    // Last-resort fallback: trimmed article
     return trimToWords(clean, MAX_WORDS);
   }
 }
