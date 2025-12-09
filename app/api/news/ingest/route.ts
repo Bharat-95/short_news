@@ -110,25 +110,25 @@ async function getHomepageLinks(base: string): Promise<string[]> {
   const links = new Set<string>();
 
   $("a[href]").each((_, el) => {
-    const href = $(el).attr("href");
-    if (!href) return;
-
+    const href = $(el).attr("href") || "";
     const abs = cleanUrl(absoluteUrl(href, base));
+
     if (!abs.startsWith(base)) return;
 
     if (
-      /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) ||
-      /\/news\//i.test(abs) ||
+      /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) || // typical article path
       /\/article\//i.test(abs) ||
+      /\/news\//i.test(abs) ||
       /actualite/i.test(abs) ||
-      /-[0-9]{3,}$/.test(abs)
+      /-[0-9]{3,}$/.test(abs) // slug ending with ID
     ) {
       links.add(abs);
     }
   });
 
-  return [...links].slice(0, 12);
+  return [...links].slice(0, 10);
 }
+
 
 /* -----------------------------------------------------------
    MODE A — Insert ONLY 1 latest new article
