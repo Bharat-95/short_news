@@ -38,6 +38,8 @@ const SITES = [
   },
 ];
 
+let insertedArticles: any[] = [];
+
 async function getRssImages(rssUrl: string) {
   try {
     const xml = await httpGet(rssUrl);
@@ -62,7 +64,10 @@ async function getRssImages(rssUrl: string) {
   }
 }
 
-function findClosestRssImage(articleUrl: string, rssMap: Record<string, string>) {
+function findClosestRssImage(
+  articleUrl: string,
+  rssMap: Record<string, string>
+) {
   const a = cleanUrl(articleUrl).toLowerCase();
   if (rssMap[a]) return rssMap[a];
 
@@ -153,9 +158,7 @@ export async function POST(req: Request) {
         );
 
         const finalImage =
-          findClosestRssImage(cleanedUrl, rssImages) ||
-          extracted.image ||
-          null;
+          findClosestRssImage(cleanedUrl, rssImages) || extracted.image || null;
 
         const categoriesArr: string[] = ["Top Stories", category];
 
@@ -184,16 +187,8 @@ export async function POST(req: Request) {
           .insert(payload);
 
         if (!error) {
-          logSiteStep(site.source, "INSERTED", cleanedUrl);
-          return NextResponse.json(
-            {
-              ok: true,
-              inserted: payload,
-              diagnostics,
-              message: "Inserted ONE article and stopped",
-            },
-            { status: 200 }
-          );
+          insertedArticles.push(payload);
+          continue; // do NOT stop the whole function
         }
 
         logError(site.source, "DB INSERT FAILED", error);
@@ -204,12 +199,25 @@ export async function POST(req: Request) {
     }
   }
 
+  if (insertedArticles.length > 0) {
   return NextResponse.json(
     {
-      ok: false,
-      message: "No new article found",
-      diagnostics,
+      ok: true,
+      count: insertedArticles.length,
+      inserted: insertedArticles,
+      diagnostics
     },
-    { status: 422 }
+    { status: 200 }
   );
+}
+
+return NextResponse.json(
+  {
+    ok: false,
+    message: "No new article found",
+    diagnostics
+  },
+  { status: 422 }
+);
+
 }
