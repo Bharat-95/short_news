@@ -31,8 +31,8 @@ const SITES = [
   },
   {
     source: "Inside News",
-    base: "https://www.insideedition.com/",
-    rss: "https://www.insideedition.com/rss",
+    base: "https://inside-news.mu",
+    rss: "https://inside-news.mu/feed/",
   },
   {
     source: "NewsMoris",
@@ -40,6 +40,24 @@ const SITES = [
     rss: "https://newsmoris.com/feed/",
   },
 ];
+
+/* ----------------------------------------------------------
+   BLOCK CATEGORY/LISTING PAGES
+------------------------------------------------------------- */
+function isListingOrCategory(url: string): boolean {
+  return (
+    /\/categorie\//i.test(url) ||
+    /\/category\//i.test(url) ||
+    /\/categories\//i.test(url) ||
+    /\/tag\//i.test(url) ||
+    /\/tags\//i.test(url) ||
+    /\/author\//i.test(url) ||
+    /\/section\//i.test(url) ||
+    /\/topics\//i.test(url) ||
+    /\/news\/category\//i.test(url) ||
+    /\/news\/tags\//i.test(url)
+  );
+}
 
 /* ----------------------------------------------------------
    RSS IMAGE FETCHER
@@ -56,8 +74,8 @@ async function getRssImages(rssUrl: string) {
 
     $("item").each((_, item) => {
       const link = cleanUrl($(item).find("link").text().trim());
-      const enclosure = $(item).find("enclosure").attr("url");
       const media = $(item).find("media\\:content").attr("url");
+      const enclosure = $(item).find("enclosure").attr("url");
       const img = media || enclosure;
       if (link && img) map[link] = img;
     });
@@ -73,16 +91,15 @@ async function getRssImages(rssUrl: string) {
 ------------------------------------------------------------- */
 function findClosestRssImage(url: string, rssMap: Record<string, string>) {
   const cleaned = cleanUrl(url).toLowerCase();
-
   if (rssMap[cleaned]) return rssMap[cleaned];
 
-  // fuzzy match
+  // fuzzy
   for (const key in rssMap) {
     const k = cleanUrl(key).toLowerCase();
     if (cleaned.includes(k) || k.includes(cleaned)) return rssMap[key];
   }
 
-  // match last slug
+  // slug match
   const end = cleaned.split("/").pop();
   for (const key in rssMap) {
     const endK = cleanUrl(key).toLowerCase().split("/").pop();
@@ -93,7 +110,7 @@ function findClosestRssImage(url: string, rssMap: Record<string, string>) {
 }
 
 /* ----------------------------------------------------------
-   HOMEPAGE SCRAPER — returns up to 10 real article URLs
+   HOMEPAGE SCRAPER — RETURNS UP TO 12 TRUE ARTICLE LINKS
 ------------------------------------------------------------- */
 async function getHomepageLinks(base: string): Promise<string[]> {
   const html = await httpGet(base);
@@ -101,38 +118,32 @@ async function getHomepageLinks(base: string): Promise<string[]> {
 
   const cheerio = await import("cheerio");
   const $ = cheerio.load(html);
-
   const links = new Set<string>();
-  const patterns = [
-    "/\\d{4}/\\d{2}/\\d{2}/",  // dated
-    "news",
-    "article",
-    "actualite",
-    "politique",
-    "societe",
-    "sport",
-    "econom",   // economy
-    "culture",
-    "faits-divers",
-    "-\\d{3,}$", // trailing ID
-  ];
 
   $("a").each((_, el) => {
-    const href = $(el).attr("href") || "";
+    const href = $(el).attr("href");
+    if (!href) return;
+
     let abs = cleanUrl(absoluteUrl(href, base));
     if (!abs.startsWith(base)) return;
 
-    for (const p of patterns) {
-      if (new RegExp(p, "i").test(abs)) {
-        links.add(abs);
-        break;
-      }
-    }
+    if (isListingOrCategory(abs)) return;
+
+    // Defimedia: slug ending
+    if (/defimedia\.info\/[a-z0-9-]+$/i.test(abs)) links.add(abs);
+
+    // Le Mauricien: dated
+    if (/lemauricien\.com\/\d{4}\/\d{2}\/\d{2}\//i.test(abs)) links.add(abs);
+
+    // NewsMoris
+    if (/newsmoris\.com\/\d{4}\//i.test(abs)) links.add(abs);
+
+    // Inside News: slug
+    if (/inside-news\.mu\/[a-z0-9-]+$/i.test(abs)) links.add(abs);
   });
 
-  return [...links].slice(0, 12); // up to 12 links per site
+  return [...links].slice(0, 12);
 }
-
 
 /* ----------------------------------------------------------
    MAIN ENDPOINT
@@ -144,62 +155,49 @@ export async function POST(req: Request) {
 
   let diagnostics: any[] = [];
 
-  // MODE A: STOP AFTER FIRST SUCCESSFUL INSERT
   for (const site of SITES) {
     try {
-      logSiteStep(site.source, "FETCHING RSS IMAGES");
+      logSiteStep(site.source, "FETCH RSS");
       const rssImages = await getRssImages(site.rss);
 
-      logSiteStep(site.source, "FETCHING HOMEPAGE");
+      logSiteStep(site.source, "FETCH HOMEPAGE");
       const links = await getHomepageLinks(site.base);
 
       diagnostics.push({ site: site.source, found: links.length });
 
       for (const link of links) {
-        const cleaned = cleanUrl(link);
+        const clean = cleanUrl(link);
 
-        // skip if URL exists
-        if (await isDuplicateUrl(cleaned)) continue;
+        if (await isDuplicateUrl(clean)) continue;
 
-        logSiteStep(site.source, "TRY ARTICLE", cleaned);
+        logSiteStep(site.source, "TRY ARTICLE", clean);
 
-        const extracted = await extractArticle(cleaned, site.base);
+        const extracted = await extractArticle(clean, site.base);
         if (!extracted || !extracted.fullText) continue;
 
-        // skip if title exists
         if (await isDuplicateTitle(extracted.title)) continue;
 
-        // summarise → classify → headline
         const summary = await summarizeNews(extracted.fullText);
-
-        const rawCat = await classifyNews(
-          extracted.fullText || extracted.title
-        );
-
+        const rawCat = await classifyNews(extracted.fullText);
         const category = mapToAllowedCategory(rawCat);
 
         const headlineObj = await generateHeadline(
           extracted.title + "\n\n" + summary
         );
 
-        const finalImg =
-          findClosestRssImage(cleaned, rssImages) ||
-          extracted.image ||
-          null;
+        const finalImage =
+          findClosestRssImage(clean, rssImages) || extracted.image || null;
 
-        const categoriesArr: string[] = ["Top Stories", category];
-
+        const categoriesArr = ["Top Stories", category];
         if (category === "Business") categoriesArr.push("Finance");
-
-        if (/\b(win|award|success|growth|improved)\b/i.test(extracted.fullText)) {
+        if (/\b(win|award|success|growth|improved)\b/i.test(extracted.fullText))
           categoriesArr.push("Good News");
-        }
 
         const payload = {
           title: extracted.title,
           summary,
-          image_url: finalImg,
-          source_url: cleaned,
+          image_url: finalImage,
+          source_url: clean,
           source: site.source,
           topics: category,
           categories: categoriesArr,
@@ -218,13 +216,11 @@ export async function POST(req: Request) {
               inserted: payload,
               site: site.source,
               diagnostics,
-              message: "Inserted ONE article and stopped (Mode A)",
+              message: "Inserted ONE article",
             },
             { status: 200 }
           );
         }
-
-        logError(site.source, "INSERT FAILED", error);
       }
     } catch (err) {
       logError(site.source, "SITE FAILED", err);
@@ -233,11 +229,7 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json(
-    {
-      ok: false,
-      message: "No new article found in any site",
-      diagnostics,
-    },
+    { ok: false, message: "No new article found", diagnostics },
     { status: 422 }
   );
 }
