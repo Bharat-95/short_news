@@ -19,11 +19,12 @@ import { supabaseBrowser } from "@/lib/db";
    NEWS SOURCES
 ------------------------------------------------------------ */
 const SITES = [
+    { source: "NewsMoris", base: "https://newsmoris.com", rss: "https://newsmoris.com/feed/" },
+    { source: "Mauritius Broadcasting", base: "https://mbc.intnet.mu", rss: "https://mbc.intnet.mu/feed/" },
   { source: "Defi Media Group", base: "https://defimedia.info", rss: "https://defimedia.info/rss.xml" },
   { source: "Le Mauricien", base: "https://lemauricien.com", rss: "https://www.lemauricien.com/feed/" },
-  { source: "Mauritius Broadcasting", base: "https://mbc.intnet.mu", rss: "https://mbc.intnet.mu/feed/" },
-  { source: "Inside News", base: "https://inside-news.mu", rss: "https://inside-news.mu/feed/" },
-  { source: "NewsMoris", base: "https://newsmoris.com", rss: "https://newsmoris.com/feed/" },
+  
+
 ];
 
 /* -----------------------------------------------------------
