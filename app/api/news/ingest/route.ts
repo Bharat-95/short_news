@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { httpGet } from "@/lib/utils/http";
 import { absoluteUrl, cleanUrl } from "@/lib/utils/url";
-import { logError, logSiteStep } from "@/lib/utils/logging";
 import { extractArticle } from "@/lib/extractors/articleExtractor";
 import { summarizeNews } from "@/lib/services/summarizer";
 import { classifyNews } from "@/lib/services/classifier";
@@ -10,9 +9,9 @@ import { isDuplicateTitle, isDuplicateUrl } from "@/lib/services/dedupe";
 import { mapToAllowedCategory } from "@/lib/services/categoryMap";
 import { supabaseBrowser } from "@/lib/db";
 
-/* ----------------------------------------------
-   NEWS SOURCES (Updated Mauritius list)
------------------------------------------------- */
+/* ----------------------------------------------------------
+   MAURITIUS NEWS SOURCES
+------------------------------------------------------------- */
 const SITES = [
   {
     source: "Defi Media Group",
@@ -41,9 +40,9 @@ const SITES = [
   },
 ];
 
-/* ----------------------------------------------
-   RSS IMAGE FETCHER
------------------------------------------------- */
+/* ----------------------------------------------------------
+   GET RSS IMAGES FOR ACCURATE THUMBNAILS
+------------------------------------------------------------- */
 async function getRssImages(rssUrl: string) {
   try {
     const xml = await httpGet(rssUrl);
@@ -53,6 +52,7 @@ async function getRssImages(rssUrl: string) {
     const $ = cheerio.load(xml, { xmlMode: true });
 
     const map: Record<string, string> = {};
+
     $("item").each((_, item) => {
       const link = cleanUrl($(item).find("link").text().trim());
       const enclosure = $(item).find("enclosure").attr("url");
@@ -67,9 +67,9 @@ async function getRssImages(rssUrl: string) {
   }
 }
 
-/* ----------------------------------------------
-   MATCH ARTICLE → RSS IMAGE
------------------------------------------------- */
+/* ----------------------------------------------------------
+   MATCH ARTICLES TO RSS IMAGES
+------------------------------------------------------------- */
 function findClosestRssImage(url: string, rssMap: Record<string, string>) {
   const cleaned = cleanUrl(url).toLowerCase();
   if (rssMap[cleaned]) return rssMap[cleaned];
@@ -79,107 +79,103 @@ function findClosestRssImage(url: string, rssMap: Record<string, string>) {
     if (cleaned.includes(k) || k.includes(cleaned)) return rssMap[key];
   }
 
-  const end = cleaned.split("/").pop();
+  // match slug
+  const slug = cleaned.split("/").pop();
   for (const key in rssMap) {
-    const endK = cleanUrl(key).toLowerCase().split("/").pop();
-    if (end === endK) return rssMap[key];
+    const slugK = cleanUrl(key).toLowerCase().split("/").pop();
+    if (slug === slugK) return rssMap[key];
   }
 
   return null;
 }
 
-/* ----------------------------------------------
-   HOMEPAGE SCRAPER (real articles only)
------------------------------------------------- */
+/* ----------------------------------------------------------
+   SCRAPE HOMEPAGE → GET REAL ARTICLE LINKS ONLY
+------------------------------------------------------------- */
 async function getHomepageLinks(base: string): Promise<string[]> {
   const html = await httpGet(base);
   if (!html) return [];
 
   const cheerio = await import("cheerio");
   const $ = cheerio.load(html);
-
   const links = new Set<string>();
 
-  $("a").each((_, el) => {
-    const href = $(el).attr("href");
+  $("a").each((_, a) => {
+    const href = $(a).attr("href");
     if (!href) return;
 
     let abs = cleanUrl(absoluteUrl(href, base));
     if (!abs.startsWith(base)) return;
 
-    // Accept real articles, avoid listing pages
+    // Accept only real articles
     if (
-      /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) ||
+      /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) ||   // dated articles
       /\/actualites\//i.test(abs) ||
       /\/news\//i.test(abs) ||
       /\/article\//i.test(abs) ||
-      /-[0-9]{3,}$/i.test(abs)
+      /-[0-9]{4,}$/i.test(abs)
     ) {
       links.add(abs);
     }
   });
 
-  return [...links].slice(0, 15);
+  return [...links].slice(0, 12);
 }
 
-/* ----------------------------------------------
-   MAIN INGEST — MODE B (Insert ALL new articles)
------------------------------------------------- */
+/* ----------------------------------------------------------
+   MAIN INGEST HANDLER — MODE A (LATEST ONLY)
+------------------------------------------------------------- */
 export async function POST(req: Request) {
   if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let inserted: any[] = [];
-  let diagnostics: any[] = [];
-
+  let diagnostics = [];
+  
   for (const site of SITES) {
     try {
-      /* 1) Get RSS images */
       const rssImages = await getRssImages(site.rss);
-
-      /* 2) Fetch homepage links */
       const links = await getHomepageLinks(site.base);
+
       diagnostics.push({ site: site.source, found: links.length });
 
       for (const link of links) {
         const cleaned = cleanUrl(link);
 
+        // URL DEDUPE
         if (await isDuplicateUrl(cleaned)) continue;
 
         const extracted = await extractArticle(cleaned, site.base);
         if (!extracted || !extracted.fullText) continue;
 
+        // TITLE DEDUPE
         if (await isDuplicateTitle(extracted.title)) continue;
 
-        /* SUMMARY */
+        // SUMMARY
         const summary = await summarizeNews(extracted.fullText);
 
-        /* CATEGORY */
-        const rawCat = await classifyNews(
-          extracted.fullText || extracted.title
-        );
+        // CATEGORY
+        const rawCat = await classifyNews(extracted.fullText);
         const category = mapToAllowedCategory(rawCat);
 
-        /* HEADLINE */
+        // HEADLINE
         const headlineObj = await generateHeadline(
           extracted.title + "\n\n" + summary
         );
 
-        /* IMAGE SELECTION */
+        // IMAGE
         const finalImg =
           findClosestRssImage(cleaned, rssImages) ||
           extracted.image ||
           null;
 
-        /* CATEGORY ARRAY */
-        const categoriesArr: string[] = ["Top Stories", category];
+        // CATEGORY ARRAY
+        const categoriesArr = ["Top Stories", category];
         if (category === "Business") categoriesArr.push("Finance");
         if (/\b(win|award|success|growth|improved)\b/i.test(extracted.fullText)) {
           categoriesArr.push("Good News");
         }
 
-        /* FINAL PAYLOAD */
         const payload = {
           title: extracted.title,
           summary,
@@ -197,31 +193,28 @@ export async function POST(req: Request) {
           .insert(payload);
 
         if (!error) {
-          inserted.push(payload);
+          return NextResponse.json(
+            {
+              ok: true,
+              inserted: payload,
+              site: site.source,
+              diagnostics,
+              message: "Inserted 1 latest article (Mode A)",
+            },
+            { status: 200 }
+          );
         }
       }
     } catch (err) {
-      logError(site.source, "SITE FAILED", err);
+      diagnostics.push({ site: site.source, error: err });
       continue;
     }
-  }
-
-  if (inserted.length > 0) {
-    return NextResponse.json(
-      {
-        ok: true,
-        count: inserted.length,
-        inserted,
-        diagnostics,
-      },
-      { status: 200 }
-    );
   }
 
   return NextResponse.json(
     {
       ok: false,
-      message: "No new article found in any site",
+      message: "No new article found",
       diagnostics,
     },
     { status: 422 }
