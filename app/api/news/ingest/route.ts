@@ -198,7 +198,7 @@ export async function POST(req: Request) {
 
         /* D — Category */
         const rawCat = await classifyNews(art.fullText || art.title);
-        const category = mapToAllowedCategory(rawCat);
+        const category = rawCat;  // Already normalized
 
         /* E — Headline */
         const headlineObj = await generateHeadline(

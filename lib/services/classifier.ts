@@ -3,53 +3,67 @@ import { normalizeWhitespace } from "../utils/normalize";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-const CATEGORIES = [
+export const CATEGORY_LABELS = [
   "Politics",
-  "Sports",
-  "International",
   "Business",
-  "Technology",
-  "Science",
-  "Automobile",
-  "Health & Fitness",
-  "Education",
-  "Fashion",
-  "Entertainment",
-  "Travel",
-  "Startups",
+  "Economy",
+  "Tourism",
   "Crime",
-  "Weather",
+  "Accident",
+  "Sports",
+  "Technology",
+  "Health",
+  "Education",
   "Environment",
+  "Weather",
+  "International",
+  "Entertainment",
+  "Lifestyle",
+  "Traffic",
   "Miscellaneous"
 ];
 
 export async function classifyNews(text: string): Promise<string> {
-  const prompt = `
-Classify the following news article into the SINGLE best category.
-Return only one of these exact labels:
+  const clean = normalizeWhitespace(text).slice(0, 6000);
 
-${CATEGORIES.join(", ")}
+  const system = `
+You are a senior news classifier for Mauritius.
+Classify the news into the SINGLE best category.
+ALWAYS choose the clearest topic.
+NEVER answer "Miscellaneous" unless no category fits.
+Return ONLY the category name.
+These are the allowed categories:
 
-Article:
-${normalizeWhitespace(text)}
+${CATEGORY_LABELS.join(", ")}
+`;
+
+  const user = `
+News:
+${clean}
 `;
 
   try {
     const res = await client.chat.completions.create({
       model: "gpt-4o-mini",
-      max_tokens: 10,
-      temperature: 0,
-      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1,
+      max_tokens: 20,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ],
     });
 
     const output = normalizeWhitespace(res.choices[0].message.content || "");
 
-    for (const c of CATEGORIES) {
-      if (output.toLowerCase().includes(c.toLowerCase())) return c;
+    for (const c of CATEGORY_LABELS) {
+      if (output.toLowerCase().includes(c.toLowerCase())) {
+        return c;
+      }
     }
 
     return "Miscellaneous";
-  } catch (e) {
+  } catch {
     return "Miscellaneous";
   }
 }
+
