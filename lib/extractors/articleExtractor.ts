@@ -1,7 +1,10 @@
+// lib/extractors/articleExtractor.ts
+
 import * as cheerio from "cheerio";
 import { httpGet } from "../utils/http";
-import { absoluteUrl } from "../utils/url";
+import { absoluteUrl, cleanUrl } from "../utils/url";
 import { stripHtml, normalizeWhitespace } from "../utils/normalize";
+import { logError, logSiteStep } from "../utils/logging";
 
 export interface ExtractedArticle {
   title: string;
@@ -11,107 +14,147 @@ export interface ExtractedArticle {
   fullText: string;
 }
 
-/** Universal text cleaner */
-function clean(text: string) {
-  return normalizeWhitespace(stripHtml(text));
+/** Acceptable article containers */
+const ARTICLE_SELECTORS = [
+  "article",
+  ".article",
+  ".post",
+  ".post-content",
+  ".entry-content",
+  ".news-content",
+  ".story-content",
+  ".node__content",
+  ".node-content",
+  ".content-body",
+  ".content-area",
+  ".field--name-body",
+  "#content",
+  "#main-content",
+];
+
+/** Reject pages like "/category/news/" */
+function isCategoryPage(url: string): boolean {
+  return /\/category\//i.test(url) || /\/tag\//i.test(url) || /\/author\//i.test(url);
 }
 
-/** Universal article extractor — works for all Mauritian sites */
-export async function extractArticle(url: string, base: string): Promise<ExtractedArticle | null> {
-  const html = await httpGet(url);
-  if (!html) return null;
+/** Clean and normalize extracted text */
+function cleanText(s?: string | null): string {
+  if (!s) return "";
+  return stripHtml(s)
+    .replace(/[\u2018\u2019\u201c\u201d]/g, "'")
+    .replace(/[^\w\s.,!?'"-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  const $ = cheerio.load(html);
+/** ------------------ MAIN EXTRACTION --------------------- */
+export async function extractArticle(
+  url: string,
+  sourceBase: string
+): Promise<ExtractedArticle | null> {
+  try {
+    if (isCategoryPage(url)) {
+      logSiteStep("extractArticle", "SKIPPED_CATEGORY", url);
+      return null;
+    }
 
-  // -----------------------------
-  // TITLE
-  // -----------------------------
-  const title =
-    $('meta[property="og:title"]').attr("content") ||
-    $("h1").first().text() ||
-    $("title").text() ||
-    "";
+    const html = await httpGet(url);
+    if (!html) return null;
 
-  // -----------------------------
-  // DESCRIPTION
-  // -----------------------------
-  const desc =
-    $('meta[property="og:description"]').attr("content") ||
-    $("meta[name=description]").attr("content") ||
-    "";
+    const $ = cheerio.load(html);
 
-  // -----------------------------
-  // IMAGE
-  // -----------------------------
-  const img =
-    $('meta[property="og:image"]').attr("content") ||
-    $("figure img").first().attr("src") ||
-    $("img").first().attr("src") ||
-    null;
+    // --------------------------------------------------
+    // TITLE
+    // --------------------------------------------------
+    const title =
+      $("meta[property='og:title']").attr("content") ||
+      $("meta[name='twitter:title']").attr("content") ||
+      $("h1").first().text().trim() ||
+      $("title").first().text().trim() ||
+      "";
 
-  const image = img ? absoluteUrl(img, base) : null;
+    // --------------------------------------------------
+    // DESCRIPTION
+    // --------------------------------------------------
+    const metaDesc =
+      $("meta[property='og:description']").attr("content") ||
+      $("meta[name='description']").attr("content") ||
+      $("meta[name='twitter:description']").attr("content") ||
+      "";
 
-  // -----------------------------
-  // DATE
-  // -----------------------------
-  const pub =
-    $('meta[property="article:published_time"]').attr("content") ||
-    $("time").attr("datetime") ||
-    null;
+    // --------------------------------------------------
+    // IMAGE
+    // --------------------------------------------------
+    const metaImage =
+      $("meta[property='og:image']").attr("content") ||
+      $("meta[name='twitter:image']").attr("content") ||
+      $("figure img").first().attr("src") ||
+      $("img").first().attr("src") ||
+      null;
 
-  // -----------------------------
-  // UNIVERSAL FULL TEXT EXTRACTION
-  // (works for ALL Mauritian news websites)
-  // -----------------------------
-  const TEXT_SELECTORS = [
-    "article",
-    ".article",
-    ".content",
-    ".content-area",
-    ".entry-content",
-    ".post-content",
-    ".td-post-content",
-    ".field--name-body",
-    ".node__content",
-    ".news-content",
-    ".story-content",
-    "#content",
-    "#main-content"
-  ];
+    const image = metaImage ? absoluteUrl(metaImage, sourceBase) : null;
 
-  let paragraphs: string[] = [];
+    // --------------------------------------------------
+    // PUBLISH DATE
+    // --------------------------------------------------
+    const timeMeta =
+      $("meta[property='article:published_time']").attr("content") ||
+      $("meta[name='pubdate']").attr("content") ||
+      $("meta[itemprop='datePublished']").attr("content") ||
+      $("time[datetime]").attr("datetime") ||
+      null;
 
-  for (const sel of TEXT_SELECTORS) {
-    $(sel)
-      .find("p")
-      .each((_, p) => {
-        const t = clean($(p).text());
+    const pubDate = timeMeta ? new Date(timeMeta).toISOString() : null;
+
+    // --------------------------------------------------
+    // FULL ARTICLE TEXT
+    // --------------------------------------------------
+    let paragraphs: string[] = [];
+
+    // Try main selectors first
+    for (const sel of ARTICLE_SELECTORS) {
+      const block = $(sel);
+      if (!block.length) continue;
+
+      block.find("script, style, .advert, .ads, .share, .social, noscript").remove();
+
+      block.find("p").each((_, p) => {
+        const t = $(p).text().trim();
         if (t.length > 25) paragraphs.push(t);
       });
 
-    if (paragraphs.length > 3) break;
+      if (paragraphs.length >= 3) break;
+    }
+
+    // Fallback: scan whole DOM
+    if (paragraphs.length < 3) {
+      $("p").each((_, p) => {
+        const t = $(p).text().trim();
+        if (t.length > 30) paragraphs.push(t);
+      });
+    }
+
+    let fullText = paragraphs.join("\n\n").trim();
+
+    // Fallback to meta description
+    if (!fullText || fullText.length < 120) {
+      fullText = metaDesc || "";
+    }
+
+    fullText = cleanText(fullText);
+
+    // --------------------------------------------------
+    // FINAL RETURN
+    // --------------------------------------------------
+    return {
+      title: stripHtml(title) || "Untitled",
+      description: stripHtml(metaDesc).trim(),
+      image,
+      pubDate,
+      fullText,
+    };
+  } catch (err) {
+    logError("extractArticle", url, err);
+    return null;
   }
-
-  // Fallback: scan entire DOM
-  if (paragraphs.length < 3) {
-    $("p").each((_, p) => {
-      const t = clean($(p).text());
-      if (t.length > 25) paragraphs.push(t);
-    });
-  }
-
-  let fullText = paragraphs.join("\n\n");
-
-  // FINAL fallback: meta description
-  if (fullText.length < 80) {
-    fullText = clean(desc || title);
-  }
-
-  return {
-    title: clean(title),
-    description: clean(desc),
-    image,
-    pubDate: pub ? new Date(pub).toISOString() : null,
-    fullText
-  };
 }
