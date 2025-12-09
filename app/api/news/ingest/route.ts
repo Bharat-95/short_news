@@ -10,9 +10,9 @@ import { isDuplicateTitle, isDuplicateUrl } from "@/lib/services/dedupe";
 import { mapToAllowedCategory } from "@/lib/services/categoryMap";
 import { supabaseBrowser } from "@/lib/db";
 
-/* ----------------------------------------------------------
-   MAURITIUS NEWS SOURCES — RSS FIRST
-------------------------------------------------------------- */
+/* ----------------------------------------------
+   NEWS SOURCES (Updated Mauritius list)
+------------------------------------------------ */
 const SITES = [
   {
     source: "Defi Media Group",
@@ -29,7 +29,11 @@ const SITES = [
     base: "https://lemauricien.com",
     rss: "https://www.lemauricien.com/feed/",
   },
-
+  {
+    source: "Inside News",
+    base: "https://inside-news.mu",
+    rss: "https://inside-news.mu/feed/",
+  },
   {
     source: "NewsMoris",
     base: "https://newsmoris.com",
@@ -37,216 +41,181 @@ const SITES = [
   },
 ];
 
-/* ----------------------------------------------------------
-   PARSE RSS FEED
-------------------------------------------------------------- */
-async function getRssItems(rssUrl: string) {
+/* ----------------------------------------------
+   RSS IMAGE FETCHER
+------------------------------------------------ */
+async function getRssImages(rssUrl: string) {
   try {
     const xml = await httpGet(rssUrl);
-    if (!xml) return [];
+    if (!xml) return {};
 
     const cheerio = await import("cheerio");
     const $ = cheerio.load(xml, { xmlMode: true });
 
-    const items: any[] = [];
-
-    $("item").each((_, el) => {
-      const link = cleanUrl($(el).find("link").first().text().trim());
-      const title = $(el).find("title").first().text().trim();
-      const desc = $(el).find("description").first().text().trim();
-      const enclosure =
-        $(el).find("enclosure").attr("url") ||
-        $(el).find("media\\:content").attr("url") ||
-        null;
-
-      items.push({
-        title,
-        link,
-        description: desc,
-        image: enclosure,
-      });
+    const map: Record<string, string> = {};
+    $("item").each((_, item) => {
+      const link = cleanUrl($(item).find("link").text().trim());
+      const enclosure = $(item).find("enclosure").attr("url");
+      const media = $(item).find("media\\:content").attr("url");
+      const img = media || enclosure;
+      if (link && img) map[link] = img;
     });
 
-    return items;
+    return map;
   } catch {
-    return [];
+    return {};
   }
 }
 
-/* ----------------------------------------------------------
-   FALLBACK: BASIC HOMEPAGE SCRAPER (ONLY IF RSS FAILS)
-------------------------------------------------------------- */
-async function getHomepageArticle(base: string): Promise<string | null> {
+/* ----------------------------------------------
+   MATCH ARTICLE → RSS IMAGE
+------------------------------------------------ */
+function findClosestRssImage(url: string, rssMap: Record<string, string>) {
+  const cleaned = cleanUrl(url).toLowerCase();
+  if (rssMap[cleaned]) return rssMap[cleaned];
+
+  for (const key in rssMap) {
+    const k = cleanUrl(key).toLowerCase();
+    if (cleaned.includes(k) || k.includes(cleaned)) return rssMap[key];
+  }
+
+  const end = cleaned.split("/").pop();
+  for (const key in rssMap) {
+    const endK = cleanUrl(key).toLowerCase().split("/").pop();
+    if (end === endK) return rssMap[key];
+  }
+
+  return null;
+}
+
+/* ----------------------------------------------
+   HOMEPAGE SCRAPER (real articles only)
+------------------------------------------------ */
+async function getHomepageLinks(base: string): Promise<string[]> {
   const html = await httpGet(base);
-  if (!html) return null;
+  if (!html) return [];
 
   const cheerio = await import("cheerio");
   const $ = cheerio.load(html);
 
-  let found: string | null = null;
+  const links = new Set<string>();
 
   $("a").each((_, el) => {
     const href = $(el).attr("href");
     if (!href) return;
 
-    const abs = cleanUrl(absoluteUrl(href, base));
+    let abs = cleanUrl(absoluteUrl(href, base));
+    if (!abs.startsWith(base)) return;
 
-    // Defimedia example: /article-name-slug
-    if (/defimedia\.info\/[a-z0-9-]+$/i.test(abs)) {
-      found = abs;
-      return false;
-    }
-
-    // Le Mauricien: date-based
-    if (/lemauricien\.com\/\d{4}\/\d{2}\/\d{2}\//i.test(abs)) {
-      found = abs;
-      return false;
-    }
-
-    // NewsMoris
-    if (/newsmoris\.com\/\d{4}\//i.test(abs)) {
-      found = abs;
-      return false;
-    }
-
-    // Inside News example
-    if (/inside-news\.mu\/[a-z0-9-]+$/i.test(abs)) {
-      found = abs;
-      return false;
+    // Accept real articles, avoid listing pages
+    if (
+      /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) ||
+      /\/actualites\//i.test(abs) ||
+      /\/news\//i.test(abs) ||
+      /\/article\//i.test(abs) ||
+      /-[0-9]{3,}$/i.test(abs)
+    ) {
+      links.add(abs);
     }
   });
 
-  return found;
+  return [...links].slice(0, 15);
 }
 
-/* ----------------------------------------------------------
-   MAIN INGEST ENDPOINT (MODE A — STOP AFTER FIRST INSERT)
-------------------------------------------------------------- */
+/* ----------------------------------------------
+   MAIN INGEST — MODE B (Insert ALL new articles)
+------------------------------------------------ */
 export async function POST(req: Request) {
   if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  let inserted: any[] = [];
   let diagnostics: any[] = [];
 
   for (const site of SITES) {
     try {
-      logSiteStep(site.source, "FETCHING RSS");
+      /* 1) Get RSS images */
+      const rssImages = await getRssImages(site.rss);
 
-      /* ----------------------------------------------
-         1) RSS → MAIN SOURCE
-      ------------------------------------------------ */
-      const rssItems = await getRssItems(site.rss);
-      diagnostics.push({ site: site.source, rssCount: rssItems.length });
+      /* 2) Fetch homepage links */
+      const links = await getHomepageLinks(site.base);
+      diagnostics.push({ site: site.source, found: links.length });
 
-      let articleUrl: string | null = null;
-      let rssMeta: any = null;
+      for (const link of links) {
+        const cleaned = cleanUrl(link);
 
-      if (rssItems.length > 0) {
-        rssMeta = rssItems[0];
-        articleUrl = rssMeta.link;
-      }
+        if (await isDuplicateUrl(cleaned)) continue;
 
-      /* ----------------------------------------------
-         2) HOMEPAGE FALLBACK ONLY IF RSS FAILS
-      ------------------------------------------------ */
-      if (!articleUrl) {
-        logSiteStep(site.source, "FALLBACK HOMEPAGE SCRAPE");
-        articleUrl = await getHomepageArticle(site.base);
-      }
+        const extracted = await extractArticle(cleaned, site.base);
+        if (!extracted || !extracted.fullText) continue;
 
-      if (!articleUrl) continue;
-      const cleanedUrl = cleanUrl(articleUrl);
+        if (await isDuplicateTitle(extracted.title)) continue;
 
-      /* ------------------------------------------------
-         Skip if duplicate URL
-      ------------------------------------------------ */
-      if (await isDuplicateUrl(cleanedUrl)) {
-        continue;
-      }
+        /* SUMMARY */
+        const summary = await summarizeNews(extracted.fullText);
 
-      logSiteStep(site.source, "EXTRACT ARTICLE", cleanedUrl);
-
-      /* ------------------------------------------------
-         Extract article content
-      ------------------------------------------------ */
-      const extracted = await extractArticle(cleanedUrl, site.base);
-      if (!extracted || !extracted.fullText) continue;
-
-      /* ------------------------------------------------
-         Skip duplicate title
-      ------------------------------------------------ */
-      if (await isDuplicateTitle(extracted.title)) {
-        continue;
-      }
-
-      /* ------------------------------------------------
-         Summarize & classify
-      ------------------------------------------------ */
-      const summary = await summarizeNews(extracted.fullText);
-      const rawCat = await classifyNews(extracted.fullText);
-      const category = mapToAllowedCategory(rawCat);
-
-      const headlineObj = await generateHeadline(
-        extracted.title + "\n\n" + summary
-      );
-
-      /* ------------------------------------------------
-         Determine final image
-      ------------------------------------------------ */
-      const finalImage = rssMeta?.image || extracted.image || null;
-
-      /* ------------------------------------------------
-         Build categories array
-      ------------------------------------------------ */
-      const categoriesArr = ["Top News", category];
-
-      if (category === "Business") categoriesArr.push("Finance");
-
-      if (/\b(win|award|success|growth|improved)\b/i.test(extracted.fullText)) {
-        categoriesArr.push("Good News");
-      }
-
-      /* ------------------------------------------------
-         Construct payload
-      ------------------------------------------------ */
-      const payload = {
-        title: extracted.title,
-        summary,
-        image_url: finalImage,
-        source_url: cleanedUrl,
-        source: site.source,
-        topics: category,
-        categories: categoriesArr,
-        headline: headlineObj,
-        pub_date: extracted.pubDate ?? null,
-      };
-
-      /* ------------------------------------------------
-         Insert → stop after first
-      ------------------------------------------------ */
-      const { error } = await supabaseBrowser
-        .from("news_articles")
-        .insert(payload);
-
-      if (!error) {
-        return NextResponse.json(
-          {
-            ok: true,
-            inserted: payload,
-            site: site.source,
-            diagnostics,
-            message: "Inserted ONE article (RSS-first Mode A)",
-          },
-          { status: 200 }
+        /* CATEGORY */
+        const rawCat = await classifyNews(
+          extracted.fullText || extracted.title
         );
-      }
+        const category = mapToAllowedCategory(rawCat);
 
-      logError(site.source, "INSERT FAILED", error);
+        /* HEADLINE */
+        const headlineObj = await generateHeadline(
+          extracted.title + "\n\n" + summary
+        );
+
+        /* IMAGE SELECTION */
+        const finalImg =
+          findClosestRssImage(cleaned, rssImages) ||
+          extracted.image ||
+          null;
+
+        /* CATEGORY ARRAY */
+        const categoriesArr: string[] = ["Top Stories", category];
+        if (category === "Business") categoriesArr.push("Finance");
+        if (/\b(win|award|success|growth|improved)\b/i.test(extracted.fullText)) {
+          categoriesArr.push("Good News");
+        }
+
+        /* FINAL PAYLOAD */
+        const payload = {
+          title: extracted.title,
+          summary,
+          image_url: finalImg,
+          source_url: cleaned,
+          source: site.source,
+          topics: category,
+          categories: categoriesArr,
+          headline: headlineObj,
+          pub_date: extracted.pubDate ?? null,
+        };
+
+        const { error } = await supabaseBrowser
+          .from("news_articles")
+          .insert(payload);
+
+        if (!error) {
+          inserted.push(payload);
+        }
+      }
     } catch (err) {
       logError(site.source, "SITE FAILED", err);
       continue;
     }
+  }
+
+  if (inserted.length > 0) {
+    return NextResponse.json(
+      {
+        ok: true,
+        count: inserted.length,
+        inserted,
+        diagnostics,
+      },
+      { status: 200 }
+    );
   }
 
   return NextResponse.json(
