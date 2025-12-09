@@ -103,27 +103,36 @@ async function getHomepageLinks(base: string): Promise<string[]> {
   const $ = cheerio.load(html);
 
   const links = new Set<string>();
+  const patterns = [
+    "/\\d{4}/\\d{2}/\\d{2}/",  // dated
+    "news",
+    "article",
+    "actualite",
+    "politique",
+    "societe",
+    "sport",
+    "econom",   // economy
+    "culture",
+    "faits-divers",
+    "-\\d{3,}$", // trailing ID
+  ];
 
   $("a").each((_, el) => {
-    let href = $(el).attr("href");
-    if (!href) return;
-
+    const href = $(el).attr("href") || "";
     let abs = cleanUrl(absoluteUrl(href, base));
     if (!abs.startsWith(base)) return;
 
-    // Heuristics for news articles
-    if (
-      /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) ||
-      /\/news\//i.test(abs) ||
-      /\/article\//i.test(abs) ||
-      /-[0-9]{3,}$/i.test(abs)
-    ) {
-      links.add(abs);
+    for (const p of patterns) {
+      if (new RegExp(p, "i").test(abs)) {
+        links.add(abs);
+        break;
+      }
     }
   });
 
-  return [...links].slice(0, 10);
+  return [...links].slice(0, 12); // up to 12 links per site
 }
+
 
 /* ----------------------------------------------------------
    MAIN ENDPOINT

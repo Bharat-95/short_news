@@ -96,9 +96,18 @@ export async function extractArticle(
     fullText = cleanText(metaDesc);
   }
 
-  if (!fullText || fullText.length < 80) {
-    return null;
+ if (!fullText || fullText.length < 100) {
+  // fallback: join all <p>
+  const allText = $("p")
+    .map((_, p) => $(p).text().trim())
+    .get()
+    .join(" ");
+
+  if (allText.length > 120) {
+    fullText = cleanText(allText);
   }
+}
+
 
   return {
     title: stripHtml(title),
