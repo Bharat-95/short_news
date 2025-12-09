@@ -1,21 +1,24 @@
 /* -----------------------------------------------------------
-   INGEST SYSTEM (MODE A — insert ONLY the LATEST valid article)
-   Clean, stable, senior-engineer grade rewrite
+   INGEST SYSTEM — MODE A (Insert ONLY the latest valid article)
+   Mauritius News — 20-Year Senior Developer Grade
 ------------------------------------------------------------ */
 
 import { NextResponse } from "next/server";
 import { httpGet } from "@/lib/utils/http";
 import { absoluteUrl, cleanUrl } from "@/lib/utils/url";
+
 import { extractArticle } from "@/lib/extractors/articleExtractor";
 import { summarizeNews } from "@/lib/services/summarizer";
 import { classifyNews } from "@/lib/services/classifier";
 import { generateHeadline } from "@/lib/services/headline";
+
 import { isDuplicateUrl, isDuplicateTitle } from "@/lib/services/dedupe";
 import { mapToAllowedCategory } from "@/lib/services/categoryMap";
+
 import { supabaseBrowser } from "@/lib/db";
 
 /* -----------------------------------------------------------
-   MAURITIUS NEWS SOURCES
+   MAURITIUS SITE LIST
 ------------------------------------------------------------ */
 const SITES = [
   {
@@ -46,11 +49,78 @@ const SITES = [
 ];
 
 /* -----------------------------------------------------------
-   RSS → image map
+   STEP 1 — Extract article URLs from RSS (MOST RELIABLE)
 ------------------------------------------------------------ */
-async function getRssImages(rss: string) {
+async function getRssLinks(rssUrl: string): Promise<string[]> {
   try {
-    const xml = await httpGet(rss);
+    const xml = await httpGet(rssUrl);
+    if (!xml) return [];
+
+    const cheerio = await import("cheerio");
+    const $ = cheerio.load(xml, { xmlMode: true });
+
+    const links: string[] = [];
+
+    $("item").each((_, item) => {
+      const link = cleanUrl($(item).find("link").text().trim());
+      if (link) links.push(link);
+    });
+
+    return links.slice(0, 6); // Only newest 6
+  } catch {
+    return [];
+  }
+}
+
+/* -----------------------------------------------------------
+   STEP 2 — Fallback: Extract URLs from homepage
+------------------------------------------------------------ */
+async function getHomepageLinks(base: string): Promise<string[]> {
+  const html = await httpGet(base);
+  if (!html) return [];
+
+  const cheerio = await import("cheerio");
+  const $ = cheerio.load(html);
+
+  const links = new Set<string>();
+
+  $("a[href]").each((_, el) => {
+    const href = $(el).attr("href") || "";
+    const abs = cleanUrl(absoluteUrl(href, base));
+
+    if (!abs.startsWith(base)) return;
+
+    // Detect article-like URLs
+    if (
+      /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) ||
+      /article/i.test(abs) ||
+      /news/i.test(abs) ||
+      /actualite/i.test(abs) ||
+      /-[0-9]{3,}$/i.test(abs)
+    ) {
+      links.add(abs);
+    }
+  });
+
+  return [...links].slice(0, 6);
+}
+
+/* -----------------------------------------------------------
+   STEP 3 — Hybrid: Use RSS first, fallback to homepage
+------------------------------------------------------------ */
+async function getCandidateLinks(site: { base: string; rss: string }) {
+  const rssLinks = await getRssLinks(site.rss);
+  if (rssLinks.length > 0) return rssLinks;
+
+  return await getHomepageLinks(site.base);
+}
+
+/* -----------------------------------------------------------
+   STEP 4 — RSS image lookup
+------------------------------------------------------------ */
+async function getRssImages(rssUrl: string): Promise<Record<string, string>> {
+  try {
+    const xml = await httpGet(rssUrl);
     if (!xml) return {};
 
     const cheerio = await import("cheerio");
@@ -74,121 +144,81 @@ async function getRssImages(rss: string) {
 }
 
 /* -----------------------------------------------------------
-   Best-match image resolver
+   STEP 5 — Best-match RSS image selection
 ------------------------------------------------------------ */
 function findClosestRssImage(url: string, rssMap: Record<string, string>) {
   const key = cleanUrl(url).toLowerCase();
-
-  // Direct match
   if (rssMap[key]) return rssMap[key];
 
-  // Extract last slug safely
   const parts = key.split("/");
-  const last = parts.pop() || ""; // ensure string
+  const last = parts.pop() || "";
 
-  // Compare against RSS URLs
-  for (const link in rssMap) {
-    const cleaned = cleanUrl(link).toLowerCase();
-    if (cleaned.endsWith(last)) {
-      return rssMap[link];
-    }
+  for (const rssUrl in rssMap) {
+    const cleaned = cleanUrl(rssUrl).toLowerCase();
+    if (cleaned.endsWith(last)) return rssMap[rssUrl];
   }
 
   return null;
 }
 
 /* -----------------------------------------------------------
-   Homepage → article link extractor
------------------------------------------------------------- */
-async function getHomepageLinks(base: string): Promise<string[]> {
-  const html = await httpGet(base);
-  if (!html) return [];
-
-  const cheerio = await import("cheerio");
-  const $ = cheerio.load(html);
-
-  const links = new Set<string>();
-
-  $("a[href]").each((_, el) => {
-    const href = $(el).attr("href") || "";
-    const abs = cleanUrl(absoluteUrl(href, base));
-
-    if (!abs.startsWith(base)) return;
-
-    if (
-      /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) || // typical article path
-      /\/article\//i.test(abs) ||
-      /\/news\//i.test(abs) ||
-      /actualite/i.test(abs) ||
-      /-[0-9]{3,}$/.test(abs) // slug ending with ID
-    ) {
-      links.add(abs);
-    }
-  });
-
-  return [...links].slice(0, 10);
-}
-
-
-/* -----------------------------------------------------------
-   MODE A — Insert ONLY 1 latest new article
+   MAIN INGEST HANDLER — MODE A
 ------------------------------------------------------------ */
 export async function POST(req: Request) {
   if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let diagnostics: any[] = [];
+  const diagnostics: any[] = [];
 
   for (const site of SITES) {
     try {
-      /* 1 — RSS images */
+      /* A — Gather candidate URLs */
+      const links = await getCandidateLinks(site);
       const rssImages = await getRssImages(site.rss);
-
-      /* 2 — Collect homepage article URLs */
-      const links = await getHomepageLinks(site.base);
 
       diagnostics.push({ site: site.source, found: links.length });
 
+      /* B — Process newest → oldest */
       for (const url of links) {
         const cleaned = cleanUrl(url);
 
-        /* Skip duplicates */
+        // Skip duplicate URL
         if (await isDuplicateUrl(cleaned)) continue;
 
-        /* Extract article */
+        // Extract article
         const art = await extractArticle(cleaned, site.base);
         if (!art || !art.fullText) continue;
 
-        /* Skip: title duplicate */
+        // Skip duplicate title
         if (await isDuplicateTitle(art.title)) continue;
 
-        /* Auto-summary (FR/EN) */
+        /* C — Summary */
         const summary = await summarizeNews(art.fullText);
 
-        /* Category */
+        /* D — Category */
         const rawCat = await classifyNews(art.fullText || art.title);
         const category = mapToAllowedCategory(rawCat);
 
-        /* Headline */
+        /* E — Headline */
         const headlineObj = await generateHeadline(
           art.title + "\n\n" + summary
         );
 
-        /* Final image decision */
+        /* F — Image */
         const finalImg =
           findClosestRssImage(cleaned, rssImages) ||
           art.image ||
           null;
 
-        /* Category array */
+        /* G — Category array */
         const categoriesArr = ["Top Stories", category];
 
         if (category === "Business") categoriesArr.push("Finance");
-        if (/\b(win|award|success|growth|improved)\b/i.test(art.fullText))
+        if (/\b(win|success|award|growth|improved)\b/i.test(art.fullText))
           categoriesArr.push("Good News");
 
-        /* Payload */
+        /* H — Payload */
         const payload = {
           title: art.title,
           summary,
@@ -198,10 +228,10 @@ export async function POST(req: Request) {
           topics: category,
           categories: categoriesArr,
           headline: headlineObj,
-          pub_date: art.pubDate ?? null,
+          pub_date: art.pubDate,
         };
 
-        /* Insert ONE article and stop */
+        /* I — Insert ONE and stop */
         const { error } = await supabaseBrowser
           .from("news_articles")
           .insert(payload);
