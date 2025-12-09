@@ -6,6 +6,19 @@ export function absoluteUrl(href: string, base: string) {
   }
 }
 
-export function cleanUrl(u: string) {
-  return u.split("#")[0].split("?")[0];
+export function cleanUrl(url: string) {
+  try {
+    const u = new URL(url);
+
+    u.hash = "";
+    u.search = "";
+    let normalized = u.toString().toLowerCase();
+
+    // remove trailing slash
+    normalized = normalized.replace(/\/$/, "");
+
+    return normalized;
+  } catch {
+    return url.toLowerCase().trim();
+  }
 }
