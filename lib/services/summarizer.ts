@@ -19,21 +19,61 @@ function looksCopied(summary: string, article: string): boolean {
   return a.includes(first);
 }
 
-async function generateSummary(clean: string) {
-  const system = `
-You are a multilingual journalist. 
-Rewrite the article into a *complete*, *factual*, *fully rewritten* summary.
+/** Detect language from article text */
+function detectLanguage(text: string): "fr" | "en" {
+  const lower = text.toLowerCase();
+
+  // simple but HIGHLY reliable for news
+  const frenchMarkers = [
+    "le ", "la ", "les ", "des ", "une ", "un ",
+    "à ", "au ", "aux ", "du ",
+    "selon", "ministre", "rapport", "député", "gouvernement",
+  ];
+
+  let score = 0;
+  frenchMarkers.forEach(m => {
+    if (lower.includes(m)) score++;
+  });
+
+  return score >= 2 ? "fr" : "en";
+}
+
+async function generateSummary(clean: string, lang: "fr" | "en") {
+
+  const system =
+    lang === "fr"
+      ? `
+Vous êtes un journaliste professionnel. 
+Réécrivez l'article sous forme de résumé *complet*, *précis* et *totalement reformulé*.
+
+Règles :
+- Maximum 60 mots.
+- Résumé uniquement en français.
+- Aucune copie de phrases du texte original.
+- Un seul paragraphe.
+- Terminez par un point.
+`
+      : `
+You are a professional journalist. 
+Rewrite the article into a *complete*, *accurate* and *fully rewritten* summary.
 
 Rules:
 - Maximum 60 words.
-- Same language as the article (English → English, French → French).
-- No copying from the article.
-- Must end with a full stop.
-- One paragraph only.
+- Summary must be in English only.
+- No copying any original sentences.
+- One paragraph.
+- Must end with a period.
 `;
 
-  const user = `
-Summarize this article in MAX 60 words. Rewrite fully and end cleanly:
+  const user =
+    lang === "fr"
+      ? `
+Résumez cet article en MAX 60 mots, en français, totalement réécrit :
+
+${clean}
+`
+      : `
+Summarize this article in MAX 60 words, in English, fully rewritten:
 
 ${clean}
 `;
@@ -58,13 +98,15 @@ ${clean}
 export async function summarizeNews(rawText: string): Promise<string> {
   const clean = stripHtml(rawText).slice(0, 9000);
 
+  const lang = detectLanguage(clean); // ← ★ Auto language detection
+
   try {
-    let s = await generateSummary(clean);
+    let s = await generateSummary(clean, lang);
     s = trimToWords(s, MAX_WORDS);
     if (!s.endsWith(".")) s += ".";
 
     if (wordCount(s) < 18 || looksCopied(s, clean)) {
-      let r = await generateSummary(clean);
+      let r = await generateSummary(clean, lang);
       r = trimToWords(r, MAX_WORDS);
       if (!r.endsWith(".")) r += ".";
 

@@ -29,11 +29,7 @@ const SITES = [
     base: "https://lemauricien.com",
     rss: "https://www.lemauricien.com/feed/",
   },
-  {
-    source: "Inside News",
-    base: "https://inside-news.mu",
-    rss: "https://inside-news.mu/feed/",
-  },
+
   {
     source: "NewsMoris",
     base: "https://newsmoris.com",
