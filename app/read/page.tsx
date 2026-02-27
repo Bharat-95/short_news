@@ -37,6 +37,44 @@ const CATEGORIES = [
 
 type Category = (typeof CATEGORIES)[number];
 
+function sanitizePublishedNoise(text: string) {
+  return (text || "")
+    .replace(
+      /\bpublished\b[\s\S]{0,120}?\bby\b[\s\S]{0,80}?(?=(published\b|publi[eé]\b|[.!?]|$))/gi,
+      " "
+    )
+    .replace(
+      /\bpubli[eé]\b[\s\S]{0,120}?\bpar\b[\s\S]{0,80}?(?=(published\b|publi[eé]\b|[.!?]|$))/gi,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeSummaryForDisplay(input: string) {
+  const clean = sanitizePublishedNoise(input);
+  if (!clean) return "";
+
+  if (clean.includes("•")) {
+    return clean
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => (line.startsWith("•") ? line : `• ${line.replace(/^[-*]\s*/, "")}`))
+      .join("\n");
+  }
+
+  const sentences = clean
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 25)
+    .slice(0, 5);
+
+  if (sentences.length === 0) return `• ${clean}`;
+  const fourOrFive = sentences.slice(0, Math.max(4, Math.min(5, sentences.length)));
+  return fourOrFive.map((s) => `• ${s}`).join("\n");
+}
+
 function formatWhen(iso?: string) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -77,7 +115,7 @@ export default function InshortsStylePage() {
         return {
           id: row.id,
           title: row.title,
-          summary: row.summary ?? row.description ?? "",
+          summary: normalizeSummaryForDisplay(row.summary ?? row.description ?? ""),
           imageUrl: row.image_url ?? row.image ?? undefined,
           publishedAt: best,
           sourceUrl: row.source_url ?? undefined,
@@ -141,7 +179,7 @@ export default function InshortsStylePage() {
         return {
           id: row.id,
           title: row.title,
-          summary: row.summary ?? row.description ?? "",
+          summary: normalizeSummaryForDisplay(row.summary ?? row.description ?? ""),
           imageUrl: row.image_url ?? row.image ?? undefined,
           publishedAt: best,
           sourceUrl: row.source_url ?? undefined,

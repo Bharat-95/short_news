@@ -46,6 +46,14 @@ function stripPublishedNoise(text: string): string {
       /\bpubli[eé]\s+il\s+y\s+a\s+\d+\s+\w+\s+le\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+par\s+[a-z0-9 .,'-]+/gi,
       " "
     )
+    .replace(
+      /\bpublished\b[\s\S]{0,120}?\bby\b[\s\S]{0,80}?(?=(published\b|publi[eé]\b|[.!?]|$))/gi,
+      " "
+    )
+    .replace(
+      /\bpubli[eé]\b[\s\S]{0,120}?\bpar\b[\s\S]{0,80}?(?=(published\b|publi[eé]\b|[.!?]|$))/gi,
+      " "
+    )
     .replace(/\bby\s+[a-z0-9 .,'-]+\s+editor\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
