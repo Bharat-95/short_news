@@ -38,12 +38,12 @@ Rules:
 
     const raw = res.choices?.[0]?.message?.content || "";
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    let obj =
+    const obj =
       jsonMatch ? JSON.parse(jsonMatch[0]) : { headline: "", subheadline: "" };
 
     // enforce 2-3 words
-    let headline = firstN(obj.headline || clean, 3);
-    let subheadline = firstN(obj.subheadline || clean, 3);
+    const headline = firstN(obj.headline || clean, 3);
+    const subheadline = firstN(obj.subheadline || clean, 3);
 
     return { headline, subheadline };
   } catch {

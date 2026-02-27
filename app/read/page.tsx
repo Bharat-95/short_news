@@ -59,7 +59,7 @@ export default function InshortsStylePage() {
   const [hasMore, setHasMore] = useState(true);
   const loaderRef = React.useRef<HTMLDivElement | null>(null);
 
-  async function loadNews(pageNumber: number, replace = false) {
+  const loadNews = React.useCallback(async (pageNumber: number, replace = false) => {
     setLoading(true);
     setError(null);
     try {
@@ -93,17 +93,18 @@ export default function InshortsStylePage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [category]);
 
   useEffect(() => {
     setItems([]);
     setPage(0);
     setHasMore(true);
     loadNews(0, true);
-  }, [category]);
+  }, [loadNews]);
 
   useEffect(() => {
     if (loading) return;
+    const node = loaderRef.current;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && hasMore && !loading) {
@@ -112,18 +113,18 @@ export default function InshortsStylePage() {
       },
       { threshold: 1 }
     );
-    if (loaderRef.current) observer.observe(loaderRef.current);
+    if (node) observer.observe(node);
     return () => {
-      if (loaderRef.current) observer.unobserve(loaderRef.current);
+      if (node) observer.unobserve(node);
     };
   }, [hasMore, loading]);
 
   useEffect(() => {
     if (page === 0) return;
     loadNews(page);
-  }, [page]);
+  }, [loadNews, page]);
 
-  async function reloadNow() {
+  const reloadNow = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -161,7 +162,7 @@ export default function InshortsStylePage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [category]);
 
   const isInitialLoad = loading && items.length === 0;
   const isRefreshing = loading && items.length > 0 && page === 0;
@@ -314,7 +315,9 @@ export default function InshortsStylePage() {
                   {n.author ? `short by ${n.author}` : "short"}
                   {n.publishedAt ? ` / ${formatWhen(n.publishedAt)}` : null}
                 </div>
-                <p className="text-sm leading-6 text-gray-700">{n.summary}</p>
+                <p className="text-sm leading-6 text-gray-700 whitespace-pre-line">
+                  {n.summary}
+                </p>
                 {n.source && (
                   <a
                     href={n.sourceUrl || "#"}

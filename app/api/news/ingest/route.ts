@@ -14,18 +14,38 @@ import { generateHeadline } from "@/lib/services/headline";
 
 import { isDuplicateUrl, isDuplicateTitle } from "@/lib/services/dedupe";
 import { supabaseBrowser } from "@/lib/db";
+import type { FinalArticlePayload } from "@/lib/utils/types";
 
 /* -----------------------------------------------------------
    NEWS SOURCES
 ------------------------------------------------------------ */
 const SITES = [
     { source: "NewsMoris", base: "https://newsmoris.com", rss: "https://newsmoris.com/feed/" },
-    { source: "Mauritius Broadcasting", base: "https://mbc.intnet.mu", rss: "https://mbc.intnet.mu/feed/" },
+    { source: "Mauritius Broadcasting", base: "https://mbcradio.tv", rss: "https://mbcradio.tv/feed/" },
   { source: "Defi Media Group", base: "https://defimedia.info", rss: "https://defimedia.info/rss.xml" },
   { source: "Le Mauricien", base: "https://lemauricien.com", rss: "https://www.lemauricien.com/feed/" },
   
 
 ];
+
+type Diagnostic =
+  | { site: string; found: number }
+  | { site: string; error: string }
+  | { insertError: string; retryError: string }
+  | {
+      site: string;
+      stats: {
+        scanned: number;
+        duplicateUrl: number;
+        extractFailed: number;
+        duplicateTitle: number;
+        inserted: number;
+      };
+    };
+
+function compactErr(msg: string): string {
+  return msg.replace(/\s+/g, " ").trim().slice(0, 260);
+}
 
 /* -----------------------------------------------------------
    STEP 1 — Extract article URLs from RSS
@@ -142,23 +162,40 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const diagnostics: any[] = [];
+  const diagnostics: Diagnostic[] = [];
 
   for (const site of SITES) {
     try {
       const links = await getCandidateLinks(site);
       const rssImages = await getRssImages(site.rss);
+      const siteStats = {
+        scanned: 0,
+        duplicateUrl: 0,
+        extractFailed: 0,
+        duplicateTitle: 0,
+        inserted: 0,
+      };
 
       diagnostics.push({ site: site.source, found: links.length });
 
       for (const url of links) {
+        siteStats.scanned += 1;
         const cleaned = cleanUrl(url);
-        if (await isDuplicateUrl(cleaned)) continue;
+        if (await isDuplicateUrl(cleaned)) {
+          siteStats.duplicateUrl += 1;
+          continue;
+        }
 
         const art = await extractArticle(cleaned, site.base);
-        if (!art || !art.fullText) continue;
+        if (!art || !art.fullText) {
+          siteStats.extractFailed += 1;
+          continue;
+        }
 
-        if (await isDuplicateTitle(art.title)) continue;
+        if (await isDuplicateTitle(art.title)) {
+          siteStats.duplicateTitle += 1;
+          continue;
+        }
 
         const summary = await summarizeNews(art.fullText);
         const rawCat = await classifyNews(art.fullText || art.title);
@@ -190,7 +227,7 @@ export async function POST(req: Request) {
         /* -----------------------------------------------------------
            PAYLOAD
         ------------------------------------------------------------ */
-        const payload: any = {
+        const payload: FinalArticlePayload = {
           title: art.title,
           summary,
           image_url: finalImg,
@@ -210,8 +247,16 @@ export async function POST(req: Request) {
           .insert(payload);
 
         if (error) {
-          const retryPayload = { ...payload };
-          delete retryPayload.pub_date;
+          const retryPayload = {
+            title: payload.title,
+            summary: payload.summary,
+            image_url: payload.image_url,
+            source_url: payload.source_url,
+            source: payload.source,
+            topics: payload.topics,
+            categories: payload.categories,
+            headline: payload.headline,
+          };
 
           const { error: retryErr } = await supabaseBrowser
             .from("news_articles")
@@ -230,11 +275,16 @@ export async function POST(req: Request) {
             );
           }
 
-          diagnostics.push({ insertError: error.message, retryError: retryErr.message });
+          diagnostics.push({
+            insertError: compactErr(error.message),
+            retryError: compactErr(retryErr.message),
+          });
           continue;
         }
 
         /* SUCCESS */
+        siteStats.inserted += 1;
+        diagnostics.push({ site: site.source, stats: siteStats });
         return NextResponse.json(
           {
             ok: true,
@@ -246,6 +296,8 @@ export async function POST(req: Request) {
           { status: 200 }
         );
       }
+
+      diagnostics.push({ site: site.source, stats: siteStats });
     } catch (err) {
       diagnostics.push({ site: site.source, error: String(err) });
       continue;

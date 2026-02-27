@@ -16,8 +16,9 @@ export async function httpGet(url: string): Promise<string | null> {
     });
 
     return typeof res.data === "string" ? res.data : JSON.stringify(res.data);
-  } catch (err: any) {
-    console.error("HTTP GET FAILED:", url, err.message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    console.error("HTTP GET FAILED:", url, message);
     return null;
   }
 }
