@@ -77,10 +77,10 @@ const REGION_CONFIGS: RegionConfig[] = [
     region: "UAE",
     table: "uae_news",
     sources: [
-      { source: "Khaleej Times", base: "https://www.khaleejtimes.com", rss: "https://www.khaleejtimes.com/rss" },
-      { source: "Gulf News", base: "https://gulfnews.com", rss: "https://gulfnews.com/rss" },
+      { source: "Khaleej Times", base: "https://www.khaleejtimes.com", rss: "https://www.khaleejtimes.com/stories.rss" },
+      { source: "Gulf News", base: "https://gulfnews.com", rss: "https://news.google.com/rss/search?q=site:gulfnews.com&hl=en-US" },
       { source: "The National", base: "https://www.thenationalnews.com", rss: "https://www.thenationalnews.com/rss" },
-      { source: "Emirates247", base: "https://www.emirates247.com", rss: "https://www.emirates247.com/rss.xml" },
+      { source: "Emirates247", base: "https://www.emirates247.com", rss: "https://news.google.com/rss/search?q=site:thenationalnews.com&hl=en-US&gl=US&ceid=US:en" },
     ],
   },
   {
