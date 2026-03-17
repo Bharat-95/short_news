@@ -27,7 +27,7 @@ export async function classifyNews(text: string): Promise<string> {
   const clean = normalizeWhitespace(text).slice(0, 6000);
 
   const system = `
-You are a senior news classifier for Mauritius.
+You are a senior news classifier.
 Classify the news into the SINGLE best category.
 ALWAYS choose the clearest topic.
 NEVER answer "Miscellaneous" unless no category fits.
@@ -66,4 +66,3 @@ ${clean}
     return "Miscellaneous";
   }
 }
-

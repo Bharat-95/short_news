@@ -1,10 +1,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
-import React, { useEffect, useState } from "react";
+
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/db";
 import Image from "next/image";
 import { Loader } from "lucide-react";
 import Link from "next/link";
+
+type PreferredCountry = "mauritius" | "uae" | "india";
+
+type UserProfile = {
+  id: string;
+  preferred_country?: PreferredCountry | null;
+};
 
 interface NewsItem {
   id: string | number;
@@ -34,6 +42,19 @@ const CATEGORIES = [
   "Education",
   "Health & Fitness",
 ] as const;
+
+const COUNTRY_OPTIONS: Array<{
+  value: PreferredCountry;
+  label: string;
+  table: "news_articles" | "uae_news" | "indian_news";
+}> = [
+  { value: "mauritius", label: "Mauritius", table: "news_articles" },
+  { value: "uae", label: "UAE", table: "uae_news" },
+  { value: "india", label: "India", table: "indian_news" },
+];
+
+const GUEST_COUNTRY_KEY = "brefnews_guest_country";
+const GUEST_PROMPTED_KEY = "brefnews_guest_prompted";
 
 type Category = (typeof CATEGORIES)[number];
 
@@ -87,31 +108,181 @@ function formatWhen(iso?: string) {
   });
 }
 
+function getTableForCountry(country: PreferredCountry) {
+  return COUNTRY_OPTIONS.find((option) => option.value === country)?.table ?? "news_articles";
+}
+
 export default function InshortsStylePage() {
   const [category, setCategory] = useState<Category>("All");
   const [items, setItems] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
-  const loaderRef = React.useRef<HTMLDivElement | null>(null);
+  const [country, setCountry] = useState<PreferredCountry | null>(null);
+  const [countryReady, setCountryReady] = useState(false);
+  const [countryPickerOpen, setCountryPickerOpen] = useState(false);
+  const [savingCountry, setSavingCountry] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const loaderRef = useRef<HTMLDivElement | null>(null);
 
-  const loadNews = React.useCallback(async (pageNumber: number, replace = false) => {
+  const fetchProfileCountry = useCallback(async (currentUserId: string) => {
+    const { data, error: profileError } = await supabaseBrowser
+      .from("user_profiles")
+      .select("id, preferred_country")
+      .eq("id", currentUserId)
+      .maybeSingle();
+
+    if (profileError) {
+      throw new Error(profileError.message);
+    }
+
+    return data as UserProfile | null;
+  }, []);
+
+  const bootstrapCountryPreference = useCallback(async () => {
+    setError(null);
+    try {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabaseBrowser.auth.getSession();
+
+      if (sessionError) throw sessionError;
+
+      const authUser = session?.user ?? null;
+      if (authUser) {
+        setIsLoggedIn(true);
+        setUserId(authUser.id);
+        const profile = await fetchProfileCountry(authUser.id);
+        if (profile?.preferred_country) {
+          setCountry(profile.preferred_country);
+          setCountryPickerOpen(false);
+        } else {
+          setCountryPickerOpen(true);
+        }
+      } else {
+        setIsLoggedIn(false);
+        setUserId(null);
+        const guestCountry = window.localStorage.getItem(GUEST_COUNTRY_KEY) as PreferredCountry | null;
+        const promptedThisSession = window.sessionStorage.getItem(GUEST_PROMPTED_KEY) === "true";
+
+        if (guestCountry && ["mauritius", "uae", "india"].includes(guestCountry)) {
+          setCountry(guestCountry);
+        }
+
+        if (!promptedThisSession || !guestCountry) {
+          setCountryPickerOpen(true);
+          window.sessionStorage.setItem(GUEST_PROMPTED_KEY, "true");
+        }
+      }
+    } catch (e: any) {
+      console.error("Preference bootstrap error", e);
+      const guestCountry = window.localStorage.getItem(GUEST_COUNTRY_KEY) as PreferredCountry | null;
+      const promptedThisSession = window.sessionStorage.getItem(GUEST_PROMPTED_KEY) === "true";
+
+      setIsLoggedIn(false);
+      setUserId(null);
+      setCountry(guestCountry && ["mauritius", "uae", "india"].includes(guestCountry) ? guestCountry : null);
+      if (!promptedThisSession || !guestCountry) {
+        setCountryPickerOpen(true);
+        window.sessionStorage.setItem(GUEST_PROMPTED_KEY, "true");
+      }
+    } finally {
+      setCountryReady(true);
+    }
+  }, [fetchProfileCountry]);
+
+  useEffect(() => {
+    bootstrapCountryPreference();
+
+    const {
+      data: { subscription },
+    } = supabaseBrowser.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        setIsLoggedIn(true);
+        setUserId(session.user.id);
+        try {
+          const profile = await fetchProfileCountry(session.user.id);
+          if (profile?.preferred_country) {
+            setCountry(profile.preferred_country);
+            setCountryPickerOpen(false);
+          } else {
+            setCountryPickerOpen(true);
+          }
+        } catch (e: any) {
+          setError(e?.message || "Failed to load preference");
+        } finally {
+          setCountryReady(true);
+        }
+      } else {
+        setIsLoggedIn(false);
+        setUserId(null);
+        const guestCountry = window.localStorage.getItem(GUEST_COUNTRY_KEY) as PreferredCountry | null;
+        setCountry(guestCountry && ["mauritius", "uae", "india"].includes(guestCountry) ? guestCountry : null);
+        setCountryReady(true);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [bootstrapCountryPreference, fetchProfileCountry]);
+
+  async function saveCountryPreference(nextCountry: PreferredCountry) {
+    setSavingCountry(true);
+    setError(null);
+    try {
+      if (isLoggedIn && userId) {
+        const { error: upsertError } = await supabaseBrowser
+          .from("user_profiles")
+          .upsert(
+            {
+              id: userId,
+              preferred_country: nextCountry,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "id" }
+          );
+
+        if (upsertError) throw upsertError;
+      } else {
+        window.localStorage.setItem(GUEST_COUNTRY_KEY, nextCountry);
+        window.sessionStorage.setItem(GUEST_PROMPTED_KEY, "true");
+      }
+
+      setCountry(nextCountry);
+      setCountryPickerOpen(false);
+      setSettingsOpen(false);
+      setDrawerOpen(false);
+    } catch (e: any) {
+      console.error("Save preference error", e);
+      setError(e?.message || "Failed to save preferred country");
+    } finally {
+      setSavingCountry(false);
+    }
+  }
+
+  const loadNews = useCallback(async (pageNumber: number, replace = false) => {
+    if (!country) return;
+
     setLoading(true);
     setError(null);
     try {
       let q: any = supabaseBrowser
-        .from("news_articles")
+        .from(getTableForCountry(country))
         .select("*")
         .order("created_at", { ascending: false })
         .range(pageNumber * 10, pageNumber * 10 + 9);
+
       if (category && category !== "All") q = q.eq("topics", category);
-      const { data, error } = await q;
-      if (error) throw new Error(error.message);
+
+      const { data, error: queryError } = await q;
+      if (queryError) throw new Error(queryError.message);
+
       const mapped: NewsItem[] = (data || []).map((row: any) => {
-        const best =
-          row.published_at ?? row.pub_date ?? row.created_at ?? null;
+        const best = row.published_at ?? row.pub_date ?? row.created_at ?? null;
         return {
           id: row.id,
           title: row.title,
@@ -123,6 +294,7 @@ export default function InshortsStylePage() {
           author: row.author ?? undefined,
         };
       });
+
       if (mapped.length < 10) setHasMore(false);
       setItems((prev) => (replace ? mapped : [...prev, ...mapped]));
     } catch (e: any) {
@@ -131,17 +303,18 @@ export default function InshortsStylePage() {
     } finally {
       setLoading(false);
     }
-  }, [category]);
+  }, [category, country]);
 
   useEffect(() => {
+    if (!countryReady || !country) return;
     setItems([]);
     setPage(0);
     setHasMore(true);
     loadNews(0, true);
-  }, [loadNews]);
+  }, [countryReady, country, category, loadNews]);
 
   useEffect(() => {
-    if (loading) return;
+    if (loading || !country) return;
     const node = loaderRef.current;
     const observer = new IntersectionObserver(
       (entries) => {
@@ -155,25 +328,30 @@ export default function InshortsStylePage() {
     return () => {
       if (node) observer.unobserve(node);
     };
-  }, [hasMore, loading]);
+  }, [country, hasMore, loading]);
 
   useEffect(() => {
-    if (page === 0) return;
+    if (page === 0 || !country) return;
     loadNews(page);
-  }, [loadNews, page]);
+  }, [page, country, loadNews]);
 
-  const reloadNow = React.useCallback(async () => {
+  async function reloadNow() {
+    if (!country) return;
+
     setLoading(true);
     setError(null);
     try {
       let q: any = supabaseBrowser
-        .from("news_articles")
+        .from(getTableForCountry(country))
         .select("*")
         .order("created_at", { ascending: false })
         .limit(100);
+
       if (category && category !== "All") q = q.eq("topics", category);
-      const { data, error } = await q;
-      if (error) throw error;
+
+      const { data, error: queryError } = await q;
+      if (queryError) throw queryError;
+
       const mapped = (data || []).map((row: any) => {
         const best = row.published_at ?? row.pub_date ?? row.created_at ?? null;
         return {
@@ -187,6 +365,7 @@ export default function InshortsStylePage() {
           author: row.author ?? undefined,
         };
       });
+
       mapped.sort((a: any, b: any) => {
         const ta = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
         const tb = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
@@ -200,9 +379,9 @@ export default function InshortsStylePage() {
     } finally {
       setLoading(false);
     }
-  }, [category]);
+  }
 
-  const isInitialLoad = loading && items.length === 0;
+  const isInitialLoad = (loading && items.length === 0) || !countryReady;
   const isRefreshing = loading && items.length > 0 && page === 0;
   const isLoadingMore = loading && items.length > 0 && page > 0;
 
@@ -230,6 +409,14 @@ export default function InshortsStylePage() {
           </button>
           <Image src="/Logo.png" alt="No Logo Found" width={160} height={80} />
           <div className="ml-auto flex items-center gap-3">
+            {country && (
+              <button
+                onClick={() => setCountryPickerOpen(true)}
+                className="rounded-md px-3 py-2 border border-gray-200 bg-white text-sm hover:bg-gray-50"
+              >
+                {COUNTRY_OPTIONS.find((option) => option.value === country)?.label}
+              </button>
+            )}
             <Link
               href="/"
               className="rounded-md px-3 py-2 bg-black text-white text-sm hover:bg-black/80 cursor-pointer"
@@ -261,11 +448,14 @@ export default function InshortsStylePage() {
               </svg>
             </span>
             <p className="font-medium">
-              For the best experience use our app on your smartphone
+              {country
+                ? `Showing ${COUNTRY_OPTIONS.find((option) => option.value === country)?.label} news`
+                : "Choose a country to start reading"}
             </p>
           </div>
         </div>
       </header>
+
       {drawerOpen && (
         <button
           aria-label="Close menu overlay"
@@ -273,6 +463,7 @@ export default function InshortsStylePage() {
           onClick={() => setDrawerOpen(false)}
         />
       )}
+
       <aside
         aria-label="Categories menu"
         className={`fixed left-0 top-0 z-40 h-full w-72 max-w-[85vw] transform bg-white shadow-xl border-r border-gray-200 transition-transform duration-300 ${
@@ -289,7 +480,36 @@ export default function InshortsStylePage() {
             ✕
           </button>
         </div>
-        <nav className="py-2 max-h-[calc(100vh-56px)] overflow-auto">
+
+        <div className="px-4 py-4 border-b border-gray-100">
+          <button
+            onClick={() => setSettingsOpen((open) => !open)}
+            className="w-full rounded-xl border border-gray-200 px-3 py-2 text-left text-sm font-medium hover:bg-gray-50"
+          >
+            Settings
+          </button>
+          {settingsOpen && (
+            <div className="mt-3 space-y-2">
+              <p className="text-xs text-gray-500">Preferred country</p>
+              {COUNTRY_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => saveCountryPreference(option.value)}
+                  disabled={savingCountry}
+                  className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${
+                    country === option.value
+                      ? "border-black bg-black text-white"
+                      : "border-gray-200 hover:bg-gray-50"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <nav className="py-2 max-h-[calc(100vh-180px)] overflow-auto">
           <ul>
             {CATEGORIES.map((cat) => (
               <li key={cat}>
@@ -310,8 +530,40 @@ export default function InshortsStylePage() {
         </nav>
       </aside>
 
+      {countryPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-xl font-semibold text-gray-900">
+              Choose your preferred country
+            </h2>
+            <p className="mt-2 text-sm text-gray-600">
+              {isLoggedIn
+                ? "We will save this to your profile and use it whenever you sign in."
+                : "We will use this on this device so you keep seeing the right news feed."}
+            </p>
+            <div className="mt-5 space-y-3">
+              {COUNTRY_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => saveCountryPreference(option.value)}
+                  disabled={savingCountry}
+                  className="w-full rounded-xl border border-gray-200 px-4 py-3 text-left hover:bg-gray-50"
+                >
+                  <span className="block text-sm font-semibold text-gray-900">
+                    {option.label}
+                  </span>
+                  <span className="block text-xs text-gray-500">
+                    Show {option.label} stories by default
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 pb-20">
-        {(isInitialLoad || isRefreshing) && (
+        {(isInitialLoad || isRefreshing || savingCountry) && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/70 z-40">
             <Loader className="animate-spin w-10 h-10 text-gray-600" />
           </div>
@@ -322,11 +574,19 @@ export default function InshortsStylePage() {
             {error}
           </div>
         )}
-        {!loading && items.length === 0 && !error && (
+
+        {!loading && countryReady && !country && !error && (
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 text-center text-sm text-gray-500">
+            Choose a country to load your news feed.
+          </div>
+        )}
+
+        {!loading && country && items.length === 0 && !error && (
           <div className="rounded-2xl border border-gray-200 bg-white p-6 text-center text-sm text-gray-500">
             No news found.
           </div>
         )}
+
         {items.map((n, index) => (
           <article
             key={`${n.id}-${index}`}
@@ -337,9 +597,7 @@ export default function InshortsStylePage() {
                 <img
                   src={n.imageUrl || "/Logo.png"}
                   alt={n.title}
-                  onError={(
-                    e: React.SyntheticEvent<HTMLImageElement, Event>
-                  ) => {
+                  onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
                     e.currentTarget.src = "/Logo.png";
                   }}
                   className="h-full w-full object-cover"
@@ -370,15 +628,18 @@ export default function InshortsStylePage() {
             </div>
           </article>
         ))}
+
         {isLoadingMore && (
           <div className="text-gray-500 flex justify-center py-4">
             <Loader className="animate-spin w-8 h-8" />
           </div>
         )}
-        <div ref={loaderRef} className="h-10"></div>
+
+        <div ref={loaderRef} className="h-10" />
+
         {!hasMore && !loading && items.length > 0 && (
           <div className="text-center text-sm text-gray-500 py-4">
-            — No more news —
+            No more news.
           </div>
         )}
       </main>

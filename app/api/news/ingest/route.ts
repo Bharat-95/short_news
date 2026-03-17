@@ -1,6 +1,8 @@
 /* -----------------------------------------------------------
-   INGEST SYSTEM — MODE A (Insert ONLY the latest valid article)
-   Mauritius News — Full Senior-Engineer Implementation
+   INGEST SYSTEM — MODE A
+   Mauritius remains unchanged in `news_articles`
+   UAE goes to `uae_news`
+   India goes to `indian_news`
 ------------------------------------------------------------ */
 
 import { NextResponse } from "next/server";
@@ -14,21 +16,38 @@ import { generateHeadline } from "@/lib/services/headline";
 
 import { isDuplicateUrl, isDuplicateTitle } from "@/lib/services/dedupe";
 import { supabaseBrowser } from "@/lib/db";
-import type { FinalArticlePayload } from "@/lib/utils/types";
+import type {
+  FinalArticlePayload,
+  NewsSourceConfig,
+  NewsTable,
+} from "@/lib/utils/types";
 
-/* -----------------------------------------------------------
-   NEWS SOURCES
------------------------------------------------------------- */
-const SITES = [
-    { source: "NewsMoris", base: "https://newsmoris.com", rss: "https://newsmoris.com/feed/" },
-    { source: "Mauritius Broadcasting", base: "https://mbcradio.tv", rss: "https://mbcradio.tv/feed/" },
-  { source: "Defi Media Group", base: "https://defimedia.info", rss: "https://defimedia.info/rss.xml" },
-  { source: "Le Mauricien", base: "https://lemauricien.com", rss: "https://www.lemauricien.com/feed/" },
-  
+type RegionConfig = {
+  region: "Mauritius" | "UAE" | "India";
+  table: NewsTable;
+  sources: NewsSourceConfig[];
+};
 
-];
+type RegionResult =
+  | {
+      ok: true;
+      region: string;
+      table: NewsTable;
+      inserted: FinalArticlePayload | Omit<FinalArticlePayload, "pub_date">;
+      site: string;
+      diagnostics: Diagnostic[];
+      message: string;
+    }
+  | {
+      ok: false;
+      region: string;
+      table: NewsTable;
+      message: string;
+      diagnostics: Diagnostic[];
+    };
 
 type Diagnostic =
+  | { region: string; table: NewsTable }
   | { site: string; found: number }
   | { site: string; error: string }
   | { insertError: string; retryError: string }
@@ -43,13 +62,43 @@ type Diagnostic =
       };
     };
 
+const REGION_CONFIGS: RegionConfig[] = [
+  {
+    region: "Mauritius",
+    table: "news_articles",
+    sources: [
+      { source: "NewsMoris", base: "https://newsmoris.com", rss: "https://newsmoris.com/feed/" },
+      { source: "Mauritius Broadcasting", base: "https://mbcradio.tv", rss: "https://mbcradio.tv/feed/" },
+      { source: "Defi Media Group", base: "https://defimedia.info", rss: "https://defimedia.info/rss.xml" },
+      { source: "Le Mauricien", base: "https://lemauricien.com", rss: "https://www.lemauricien.com/feed/" },
+    ],
+  },
+  {
+    region: "UAE",
+    table: "uae_news",
+    sources: [
+      { source: "Khaleej Times", base: "https://www.khaleejtimes.com", rss: "https://www.khaleejtimes.com/rss" },
+      { source: "Gulf News", base: "https://gulfnews.com", rss: "https://gulfnews.com/rss" },
+      { source: "The National", base: "https://www.thenationalnews.com", rss: "https://www.thenationalnews.com/rss" },
+      { source: "Emirates247", base: "https://www.emirates247.com", rss: "https://www.emirates247.com/rss.xml" },
+    ],
+  },
+  {
+    region: "India",
+    table: "indian_news",
+    sources: [
+      { source: "The Hindu", base: "https://www.thehindu.com", rss: "https://www.thehindu.com/news/national/feeder/default.rss" },
+      { source: "Indian Express", base: "https://indianexpress.com", rss: "https://indianexpress.com/section/india/feed/" },
+      { source: "Hindustan Times", base: "https://www.hindustantimes.com", rss: "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml" },
+      { source: "NDTV", base: "https://www.ndtv.com", rss: "https://feeds.feedburner.com/ndtvnews-india-news" },
+    ],
+  },
+];
+
 function compactErr(msg: string): string {
   return msg.replace(/\s+/g, " ").trim().slice(0, 260);
 }
 
-/* -----------------------------------------------------------
-   STEP 1 — Extract article URLs from RSS
------------------------------------------------------------- */
 async function getRssLinks(rssUrl: string): Promise<string[]> {
   try {
     const xml = await httpGet(rssUrl);
@@ -70,9 +119,6 @@ async function getRssLinks(rssUrl: string): Promise<string[]> {
   }
 }
 
-/* -----------------------------------------------------------
-   STEP 2 — Homepage fallback
------------------------------------------------------------- */
 async function getHomepageLinks(base: string): Promise<string[]> {
   const html = await httpGet(base);
   if (!html) return [];
@@ -89,9 +135,7 @@ async function getHomepageLinks(base: string): Promise<string[]> {
 
     if (
       /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) ||
-      /article/i.test(abs) ||
-      /news/i.test(abs) ||
-      /actualite/i.test(abs) ||
+      /article|news|actualite|india|uae|nation|business|world/i.test(abs) ||
       /-[0-9]{3,}$/i.test(abs)
     ) {
       links.add(abs);
@@ -101,18 +145,12 @@ async function getHomepageLinks(base: string): Promise<string[]> {
   return [...links].slice(0, 6);
 }
 
-/* -----------------------------------------------------------
-   STEP 3 — Hybrid URL selection
------------------------------------------------------------- */
-async function getCandidateLinks(site: { base: string; rss: string }) {
+async function getCandidateLinks(site: NewsSourceConfig) {
   const rssLinks = await getRssLinks(site.rss);
   if (rssLinks.length > 0) return rssLinks;
   return await getHomepageLinks(site.base);
 }
 
-/* -----------------------------------------------------------
-   STEP 4 — RSS images
------------------------------------------------------------- */
 async function getRssImages(rssUrl: string): Promise<Record<string, string>> {
   try {
     const xml = await httpGet(rssUrl);
@@ -138,9 +176,6 @@ async function getRssImages(rssUrl: string): Promise<Record<string, string>> {
   }
 }
 
-/* -----------------------------------------------------------
-   STEP 5 — Best-match RSS image
------------------------------------------------------------- */
 function findClosestRssImage(url: string, rssMap: Record<string, string>) {
   const key = cleanUrl(url).toLowerCase();
   if (rssMap[key]) return rssMap[key];
@@ -154,17 +189,44 @@ function findClosestRssImage(url: string, rssMap: Record<string, string>) {
   return null;
 }
 
-/* -----------------------------------------------------------
-   MAIN INGEST HANDLER — MODE A
------------------------------------------------------------- */
-export async function POST(req: Request) {
-  if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function insertIntoTable(table: NewsTable, payload: FinalArticlePayload) {
+  const { error } = await supabaseBrowser.from(table).insert(payload);
+
+  if (!error) {
+    return { ok: true as const, inserted: payload, message: "Inserted 1 latest article (Mode A)" };
   }
 
-  const diagnostics: Diagnostic[] = [];
+  const retryPayload = {
+    title: payload.title,
+    summary: payload.summary,
+    image_url: payload.image_url,
+    source_url: payload.source_url,
+    source: payload.source,
+    topics: payload.topics,
+    categories: payload.categories,
+    headline: payload.headline,
+  };
 
-  for (const site of SITES) {
+  const { error: retryErr } = await supabaseBrowser.from(table).insert(retryPayload);
+  if (!retryErr) {
+    return {
+      ok: true as const,
+      inserted: retryPayload,
+      message: "Inserted 1 latest article (Fallback pub_date removed)",
+    };
+  }
+
+  return {
+    ok: false as const,
+    insertError: compactErr(error.message),
+    retryError: compactErr(retryErr.message),
+  };
+}
+
+async function ingestRegion(config: RegionConfig): Promise<RegionResult> {
+  const diagnostics: Diagnostic[] = [{ region: config.region, table: config.table }];
+
+  for (const site of config.sources) {
     try {
       const links = await getCandidateLinks(site);
       const rssImages = await getRssImages(site.rss);
@@ -181,7 +243,8 @@ export async function POST(req: Request) {
       for (const url of links) {
         siteStats.scanned += 1;
         const cleaned = cleanUrl(url);
-        if (await isDuplicateUrl(cleaned)) {
+
+        if (await isDuplicateUrl(cleaned, config.table)) {
           siteStats.duplicateUrl += 1;
           continue;
         }
@@ -192,25 +255,20 @@ export async function POST(req: Request) {
           continue;
         }
 
-        if (await isDuplicateTitle(art.title)) {
+        if (await isDuplicateTitle(art.title, config.table)) {
           siteStats.duplicateTitle += 1;
           continue;
         }
 
         const summary = await summarizeNews(art.fullText);
-        const rawCat = await classifyNews(art.fullText || art.title);
-        const category = rawCat;
-
-        const headlineObj = await generateHeadline(
-          art.title + "\n\n" + summary
-        );
+        const category = await classifyNews(art.fullText || art.title);
+        const headlineObj = await generateHeadline(`${art.title}\n\n${summary}`);
 
         const finalImg =
           findClosestRssImage(cleaned, rssImages) ||
           art.image ||
           null;
 
-        /* ---------------- CATEGORY ARRAY LOGIC FIXED ---------------- */
         const categoriesArr: string[] = ["Top Stories"];
 
         if (["Business", "Economy"].includes(category)) {
@@ -224,9 +282,6 @@ export async function POST(req: Request) {
           categoriesArr.push("Good News");
         }
 
-        /* -----------------------------------------------------------
-           PAYLOAD
-        ------------------------------------------------------------ */
         const payload: FinalArticlePayload = {
           title: art.title,
           summary,
@@ -239,73 +294,71 @@ export async function POST(req: Request) {
           pub_date: art.pubDate ?? null,
         };
 
-        /* -----------------------------------------------------------
-           INSERT — WITH FALLBACK (NEVER FAIL)
-        ------------------------------------------------------------ */
-        const { error } = await supabaseBrowser
-          .from("news_articles")
-          .insert(payload);
-
-        if (error) {
-          const retryPayload = {
-            title: payload.title,
-            summary: payload.summary,
-            image_url: payload.image_url,
-            source_url: payload.source_url,
-            source: payload.source,
-            topics: payload.topics,
-            categories: payload.categories,
-            headline: payload.headline,
-          };
-
-          const { error: retryErr } = await supabaseBrowser
-            .from("news_articles")
-            .insert(retryPayload);
-
-          if (!retryErr) {
-            return NextResponse.json(
-              {
-                ok: true,
-                inserted: retryPayload,
-                site: site.source,
-                diagnostics,
-                message: "Inserted 1 latest article (Fallback pub_date removed)",
-              },
-              { status: 200 }
-            );
-          }
-
+        const insertResult = await insertIntoTable(config.table, payload);
+        if (!insertResult.ok) {
           diagnostics.push({
-            insertError: compactErr(error.message),
-            retryError: compactErr(retryErr.message),
+            insertError: insertResult.insertError,
+            retryError: insertResult.retryError,
           });
           continue;
         }
 
-        /* SUCCESS */
         siteStats.inserted += 1;
         diagnostics.push({ site: site.source, stats: siteStats });
-        return NextResponse.json(
-          {
-            ok: true,
-            inserted: payload,
-            site: site.source,
-            diagnostics,
-            message: "Inserted 1 latest article (Mode A)",
-          },
-          { status: 200 }
-        );
+
+        return {
+          ok: true,
+          region: config.region,
+          table: config.table,
+          inserted: insertResult.inserted,
+          site: site.source,
+          diagnostics,
+          message: insertResult.message,
+        };
       }
 
       diagnostics.push({ site: site.source, stats: siteStats });
     } catch (err) {
       diagnostics.push({ site: site.source, error: String(err) });
-      continue;
     }
   }
 
+  return {
+    ok: false,
+    region: config.region,
+    table: config.table,
+    message: `No new valid article found for ${config.region}`,
+    diagnostics,
+  };
+}
+
+/* -----------------------------------------------------------
+   MAIN INGEST HANDLER
+------------------------------------------------------------ */
+export async function POST(req: Request) {
+  if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const results: RegionResult[] = [];
+
+  for (const config of REGION_CONFIGS) {
+    const result = await ingestRegion(config);
+    results.push(result);
+  }
+
+  const insertedCount = results.filter((result) => result.ok).length;
+
   return NextResponse.json(
-    { ok: false, message: "No new valid article found", diagnostics },
-    { status: 422 }
+    {
+      ok: insertedCount > 0,
+      insertedCount,
+      results,
+      message:
+        insertedCount > 0
+          ? `Inserted ${insertedCount} latest article(s) across configured regions`
+          : "No new valid article found",
+    },
+    { status: insertedCount > 0 ? 200 : 422 }
   );
 }

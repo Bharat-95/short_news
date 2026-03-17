@@ -1,6 +1,7 @@
 // lib/services/dedupe.ts
 import { supabaseBrowser } from "@/lib/db";
 import { normalizeWhitespace } from "../utils/normalize";
+import type { NewsTable } from "../utils/types";
 
 function tokenize(s?: string | null) {
   if (!s) return [];
@@ -27,10 +28,11 @@ function tokenOverlap(a: string, b: string): number {
  */
 export async function isDuplicateTitle(
   title: string,
+  table: NewsTable = "news_articles",
   threshold = 0.55
 ): Promise<boolean> {
   const { data, error } = await supabaseBrowser
-    .from("news_articles")
+    .from(table)
     .select("title")
     .order("created_at", { ascending: false })
     .limit(300);
@@ -48,9 +50,12 @@ export async function isDuplicateTitle(
 /**
  * Check if URL already exists
  */
-export async function isDuplicateUrl(url: string): Promise<boolean> {
+export async function isDuplicateUrl(
+  url: string,
+  table: NewsTable = "news_articles"
+): Promise<boolean> {
   const { data } = await supabaseBrowser
-    .from("news_articles")
+    .from(table)
     .select("id")
     .eq("source_url", url)
     .limit(1)

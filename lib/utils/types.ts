@@ -1,5 +1,13 @@
 // General shared types
 
+export type NewsTable = "news_articles" | "uae_news" | "indian_news";
+
+export interface NewsSourceConfig {
+  source: string;
+  base: string;
+  rss: string;
+}
+
 export interface ArticleCandidate {
   url: string;
   source: string;
