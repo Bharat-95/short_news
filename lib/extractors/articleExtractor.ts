@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import { httpGet } from "../utils/http";
 import { absoluteUrl } from "../utils/url";
-import { stripHtml } from "../utils/normalize";
+import { normalizeWhitespace, stripHtml } from "../utils/normalize";
 
 export interface ExtractedArticle {
   title: string;
@@ -13,13 +13,21 @@ export interface ExtractedArticle {
 
 const ARTICLE_SELECTORS = [
   "article",
+  "main article",
   ".article-body",
   ".article-content",
+  ".article-content-wrapper",
   ".article-details-page-content",
   ".post-content",
   ".entry-content",
+  ".story-body",
   ".content-area",
   ".content-body",
+  ".wysiwyg",
+  ".wysiwyg-content",
+  ".story-container",
+  ".story_details",
+  ".itemFullText",
   ".node__content",
   ".field--name-body",
   ".field--type-text-with-summary",
@@ -28,6 +36,9 @@ const ARTICLE_SELECTORS = [
   ".news-content",
   ".single-content",
   ".td-post-content",
+  "[data-testid='article-content']",
+  "[data-module='ArticleBody']",
+  ".articleBody",
 ];
 
 const FOOTER_WORDS = [
@@ -67,35 +78,129 @@ function cleanParagraph(t: string) {
   return st;
 }
 
+function tryParseJson(value: string) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function collectJsonLdNodes(input: unknown, bucket: Record<string, unknown>[]) {
+  if (!input) return;
+  if (Array.isArray(input)) {
+    input.forEach((entry) => collectJsonLdNodes(entry, bucket));
+    return;
+  }
+  if (typeof input !== "object") return;
+
+  const node = input as Record<string, unknown>;
+  bucket.push(node);
+
+  if (Array.isArray(node["@graph"])) {
+    collectJsonLdNodes(node["@graph"], bucket);
+  }
+}
+
+function firstString(value: unknown): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstString(item);
+      if (found) return found;
+    }
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    return firstString(obj.url) || firstString(obj["@id"]);
+  }
+  return null;
+}
+
+function extractJsonLd($: cheerio.CheerioAPI) {
+  const nodes: Record<string, unknown>[] = [];
+
+  $("script[type='application/ld+json']").each((_, el) => {
+    const raw = $(el).contents().text().trim();
+    if (!raw) return;
+    const parsed = tryParseJson(raw);
+    collectJsonLdNodes(parsed, nodes);
+  });
+
+  for (const node of nodes) {
+    const rawType = node["@type"];
+    const types = Array.isArray(rawType) ? rawType.map(String) : [String(rawType || "")];
+    const isArticle = types.some((type) => /article|newsarticle|reportage/i.test(type));
+    if (!isArticle) continue;
+
+    const articleBody = normalizeWhitespace(String(node.articleBody || "")).trim();
+    const headline = normalizeWhitespace(String(node.headline || "")).trim();
+    const description = normalizeWhitespace(String(node.description || "")).trim();
+    const image = firstString(node.image);
+    const pubDate = firstString(node.datePublished);
+
+    return {
+      headline,
+      description,
+      articleBody,
+      image,
+      pubDate,
+    };
+  }
+
+  return null;
+}
+
 export async function extractArticle(url: string, base: string) {
   const html = await httpGet(url);
   if (!html) return null;
 
   const $ = cheerio.load(html);
+  const jsonLd = extractJsonLd($);
 
   const title =
+    jsonLd?.headline ||
     $('meta[property="og:title"]').attr("content") ||
+    $('meta[name="twitter:title"]').attr("content") ||
     $("h1").first().text().trim();
 
   const description =
+    jsonLd?.description ||
     $('meta[property="og:description"]').attr("content") ||
+    $('meta[name="twitter:description"]').attr("content") ||
     $("meta[name='description']").attr("content") ||
     "";
 
   const metaImage =
+    jsonLd?.image ||
     $('meta[property="og:image"]').attr("content") ||
+    $('meta[name="twitter:image"]').attr("content") ||
     $("figure img").first().attr("src") ||
     null;
 
   const pubDateRaw =
+    jsonLd?.pubDate ||
     $('meta[property="article:published_time"]').attr("content") ||
     $("time[datetime]").attr("datetime") ||
     null;
 
-  const pubDate = pubDateRaw ? new Date(pubDateRaw).toISOString() : null;
+  const pubDate =
+    pubDateRaw && !Number.isNaN(new Date(pubDateRaw).getTime())
+      ? new Date(pubDateRaw).toISOString()
+      : null;
 
   const paragraphs: string[] = [];
   const seen = new Set<string>();
+
+  const pushParagraph = (value: string) => {
+    const txt = cleanParagraph(value);
+    const key = txt.toLowerCase();
+    if (txt && !seen.has(key)) {
+      seen.add(key);
+      paragraphs.push(txt);
+    }
+  };
 
   for (const sel of ARTICLE_SELECTORS) {
     const block = $(sel);
@@ -104,20 +209,37 @@ export async function extractArticle(url: string, base: string) {
     block.find("script, style, noscript, .ads, .advert").remove();
 
     block.find("p, li").each((_, el) => {
-      const txt = cleanParagraph($(el).text());
-      const key = txt.toLowerCase();
-      if (txt && !seen.has(key)) {
-        seen.add(key);
-        paragraphs.push(txt);
-      }
+      pushParagraph($(el).text());
     });
 
     if (paragraphs.length >= 4) break;
   }
 
-  if (paragraphs.length < 2) return null;
+  if (paragraphs.length < 2) {
+    $("main p, article p, .main-content p, .content p, p").each((_, el) => {
+      pushParagraph($(el).text());
+    });
+  }
 
-  const fullText = paragraphs.join(" ");
+  if (paragraphs.length < 2 && jsonLd?.articleBody) {
+    jsonLd.articleBody
+      .split(/\n+/)
+      .map((part) => part.trim())
+      .forEach((part) => pushParagraph(part));
+  }
+
+  let fullText = normalizeWhitespace(paragraphs.join(" "));
+
+  if (fullText.length < 120) {
+    const fallbackText = normalizeWhitespace(
+      [description, jsonLd?.articleBody || ""].filter(Boolean).join(" ")
+    );
+    if (fallbackText.length >= 80) {
+      fullText = fallbackText;
+    }
+  }
+
+  if (fullText.length < 80) return null;
 
   return {
     title,

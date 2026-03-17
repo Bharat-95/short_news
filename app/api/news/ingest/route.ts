@@ -68,7 +68,7 @@ const REGION_CONFIGS: RegionConfig[] = [
     table: "news_articles",
     sources: [
       { source: "NewsMoris", base: "https://newsmoris.com", rss: "https://newsmoris.com/feed/" },
-      { source: "Mauritius Broadcasting", base: "https://mbcradio.tv", rss: "https://mbcradio.tv/feed/" },
+      //{ source: "Mauritius Broadcasting", base: "https://mbcradio.tv", rss: "https://mbcradio.tv/news/feed" },
       { source: "Defi Media Group", base: "https://defimedia.info", rss: "https://defimedia.info/rss.xml" },
       { source: "Le Mauricien", base: "https://lemauricien.com", rss: "https://www.lemauricien.com/feed/" },
     ],
@@ -77,10 +77,10 @@ const REGION_CONFIGS: RegionConfig[] = [
     region: "UAE",
     table: "uae_news",
     sources: [
-      { source: "Khaleej Times", base: "https://www.khaleejtimes.com", rss: "https://www.khaleejtimes.com/stories.rss" },
-      { source: "Gulf News", base: "https://gulfnews.com", rss: "https://news.google.com/rss/search?q=site:gulfnews.com&hl=en-US" },
-      { source: "The National", base: "https://www.thenationalnews.com", rss: "https://www.thenationalnews.com/rss" },
-      { source: "Emirates247", base: "https://www.emirates247.com", rss: "https://news.google.com/rss/search?q=site:thenationalnews.com&hl=en-US&gl=US&ceid=US:en" },
+      { source: "Khaleej Times", base: "https://www.khaleejtimes.com/uae", rss: "https://www.khaleejtimes.com/stories.rss" },
+      { source: "Gulf News", base: "https://gulfnews.com/uae", rss: "https://news.google.com/rss/search?q=site:gulfnews.com&hl=en-US" },
+      //{ source: "The National", base: "https://www.thenationalnews.com/uae", rss: "" },
+      { source: "Emirates247", base: "https://www.emirates247.com/news", rss: "https://www.emirates247.com/rss/mobile/v2/flash-news.rss" },
     ],
   },
   {
@@ -89,8 +89,8 @@ const REGION_CONFIGS: RegionConfig[] = [
     sources: [
       { source: "The Hindu", base: "https://www.thehindu.com", rss: "https://www.thehindu.com/news/national/feeder/default.rss" },
       { source: "Indian Express", base: "https://indianexpress.com", rss: "https://indianexpress.com/section/india/feed/" },
-      { source: "Hindustan Times", base: "https://www.hindustantimes.com", rss: "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml" },
-      { source: "NDTV", base: "https://www.ndtv.com", rss: "https://feeds.feedburner.com/ndtvnews-india-news" },
+      { source: "India Today", base: "https://www.indiatoday.in/india", rss: "" },
+      { source: "Deccan Herald", base: "https://www.deccanherald.com/india", rss: "" },
     ],
   },
 ];
@@ -100,6 +100,7 @@ function compactErr(msg: string): string {
 }
 
 async function getRssLinks(rssUrl: string): Promise<string[]> {
+  if (!rssUrl) return [];
   try {
     const xml = await httpGet(rssUrl);
     if (!xml) return [];
@@ -135,7 +136,7 @@ async function getHomepageLinks(base: string): Promise<string[]> {
 
     if (
       /\/\d{4}\/\d{2}\/\d{2}\//.test(abs) ||
-      /article|news|actualite|india|uae|nation|business|world/i.test(abs) ||
+      /article|news|actualite|india|uae|nation|business|world|story|stories|middle-east/i.test(abs) ||
       /-[0-9]{3,}$/i.test(abs)
     ) {
       links.add(abs);
@@ -152,6 +153,7 @@ async function getCandidateLinks(site: NewsSourceConfig) {
 }
 
 async function getRssImages(rssUrl: string): Promise<Record<string, string>> {
+  if (!rssUrl) return {};
   try {
     const xml = await httpGet(rssUrl);
     if (!xml) return {};
