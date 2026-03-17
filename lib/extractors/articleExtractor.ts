@@ -41,6 +41,61 @@ const ARTICLE_SELECTORS = [
   ".articleBody",
 ];
 
+const DOMAIN_SELECTORS: Array<{ match: RegExp; selectors: string[] }> = [
+  {
+    match: /thehindu\.com/i,
+    selectors: [
+      ".articlebodycontent",
+      ".storyline",
+      ".story-card",
+      ".article-content",
+    ],
+  },
+  {
+    match: /indianexpress\.com/i,
+    selectors: [
+      ".full-details",
+      ".articles",
+      ".article-content",
+      ".story_details",
+    ],
+  },
+  {
+    match: /indiatoday\.in/i,
+    selectors: [
+      ".description",
+      ".story__content",
+      ".strybody",
+      ".detail-text",
+    ],
+  },
+  {
+    match: /deccanherald\.com/i,
+    selectors: [
+      ".content-details",
+      ".article-detail-content",
+      ".field-item",
+      ".story-body",
+    ],
+  },
+  {
+    match: /khaleejtimes\.com/i,
+    selectors: [
+      "[data-testid='article-body']",
+      ".article-body-wrapper",
+      ".article-content",
+    ],
+  },
+  {
+    match: /gulfnews\.com/i,
+    selectors: [
+      ".article-content",
+      ".content-body",
+      ".story-body",
+    ],
+  },
+];
+
 const FOOTER_WORDS = [
   "disclaimer",
   "privacy policy",
@@ -51,6 +106,25 @@ const FOOTER_WORDS = [
   "tel ",
   "email ",
   "contact",
+];
+
+const NOISE_PHRASES = [
+  "all rights reserved",
+  "copyright",
+  "powered by ict dept",
+  "the view from india",
+  "first day first show",
+  "today's cache",
+  "science for all",
+  "ask the law",
+  "whatsapp channel",
+  "follow us",
+  "sign up",
+  "newsletter",
+  "recommended for you",
+  "also read",
+  "morning digest",
+  "evening wrap",
 ];
 
 const PUBLISHED_BYLINE_RE =
@@ -74,8 +148,18 @@ function cleanParagraph(t: string) {
   const st = cleanLeadingMeta(stripHtml(t).replace(/\s+/g, " ").trim());
   if (st.length < 40) return "";
   if (FOOTER_WORDS.some(w => st.toLowerCase().includes(w))) return "";
+  if (NOISE_PHRASES.some((w) => st.toLowerCase().includes(w))) return "";
   if (PUBLISHED_BYLINE_RE.test(st)) return "";
   return st;
+}
+
+function selectorsForUrl(url: string) {
+  for (const entry of DOMAIN_SELECTORS) {
+    if (entry.match.test(url)) {
+      return [...entry.selectors, ...ARTICLE_SELECTORS];
+    }
+  }
+  return ARTICLE_SELECTORS;
 }
 
 function tryParseJson(value: string) {
@@ -202,11 +286,15 @@ export async function extractArticle(url: string, base: string) {
     }
   };
 
-  for (const sel of ARTICLE_SELECTORS) {
+  const selectors = selectorsForUrl(url);
+
+  for (const sel of selectors) {
     const block = $(sel);
     if (!block.length) continue;
 
-    block.find("script, style, noscript, .ads, .advert").remove();
+    block
+      .find("script, style, noscript, .ads, .advert, aside, nav, footer, .newsletter, .subscribe, .related-news")
+      .remove();
 
     block.find("p, li").each((_, el) => {
       pushParagraph($(el).text());
@@ -216,7 +304,7 @@ export async function extractArticle(url: string, base: string) {
   }
 
   if (paragraphs.length < 2) {
-    $("main p, article p, .main-content p, .content p, p").each((_, el) => {
+    $("main p, article p, .main-content p, .content p, .article-content p, p").each((_, el) => {
       pushParagraph($(el).text());
     });
   }

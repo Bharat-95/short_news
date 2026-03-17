@@ -19,7 +19,7 @@ interface NewsItem {
   title: string;
   author?: string;
   source?: string;
-  summary: string;
+  summary: string[];
   imageUrl?: string;
   publishedAt?: string;
   sourceUrl?: string;
@@ -74,15 +74,46 @@ function sanitizePublishedNoise(text: string) {
 
 function normalizeSummaryForDisplay(input: string) {
   const clean = sanitizePublishedNoise(input);
-  if (!clean) return "";
+  if (!clean) return [];
+
+  const normalizeBulletItems = (items: string[]) => {
+    const merged: string[] = [];
+    let carry = "";
+
+    for (const rawItem of items) {
+      const item = `${carry} ${rawItem}`.trim();
+      carry = "";
+      if (!item) continue;
+
+      const isFragment =
+        item.length <= 6 ||
+        /^(mr|mrs|ms|dr|prof|shri|smt)\.$/i.test(item) ||
+        /^[a-z]\.$/i.test(item);
+
+      if (isFragment) {
+        carry = item;
+        continue;
+      }
+
+      merged.push(item);
+    }
+
+    if (carry && merged.length > 0) {
+      merged[merged.length - 1] = `${merged[merged.length - 1]} ${carry}`.trim();
+    }
+
+    return merged;
+  };
 
   if (clean.includes("•")) {
-    return clean
-      .split(/\r?\n/)
+    return normalizeBulletItems(
+      clean
+      .split(/(?:\r?\n)+|(?=•)/)
       .map((line) => line.trim())
       .filter(Boolean)
-      .map((line) => (line.startsWith("•") ? line : `• ${line.replace(/^[-*]\s*/, "")}`))
-      .join("\n");
+      .map((line) => line.replace(/^•\s*/, "").replace(/^[-*]\s*/, "").trim())
+      .filter(Boolean)
+    );
   }
 
   const sentences = clean
@@ -91,9 +122,9 @@ function normalizeSummaryForDisplay(input: string) {
     .filter((s) => s.length > 25)
     .slice(0, 5);
 
-  if (sentences.length === 0) return `• ${clean}`;
+  if (sentences.length === 0) return [clean];
   const fourOrFive = sentences.slice(0, Math.max(4, Math.min(5, sentences.length)));
-  return fourOrFive.map((s) => `• ${s}`).join("\n");
+  return normalizeBulletItems(fourOrFive);
 }
 
 function formatWhen(iso?: string) {
@@ -600,7 +631,7 @@ export default function InshortsStylePage() {
                   onError={(e: React.SyntheticEvent<HTMLImageElement, Event>) => {
                     e.currentTarget.src = "/Logo.png";
                   }}
-                  className="h-full w-full object-cover"
+                  className="h-full w-full object-cover object-top"
                 />
               </div>
               <div className="space-y-2">
@@ -611,9 +642,14 @@ export default function InshortsStylePage() {
                   {n.author ? `short by ${n.author}` : "short"}
                   {n.publishedAt ? ` / ${formatWhen(n.publishedAt)}` : null}
                 </div>
-                <p className="text-sm leading-6 text-gray-700 whitespace-pre-line">
-                  {n.summary}
-                </p>
+                <div className="space-y-2 text-sm leading-6 text-gray-700">
+                  {n.summary.map((bullet, bulletIndex) => (
+                    <div key={`${n.id}-${bulletIndex}`} className="flex items-start gap-2">
+                      <span className="mt-1 text-base leading-none text-gray-900">•</span>
+                      <p className="flex-1">{bullet}</p>
+                    </div>
+                  ))}
+                </div>
                 {n.source && (
                   <a
                     href={n.sourceUrl || "#"}

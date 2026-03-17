@@ -78,7 +78,7 @@ const REGION_CONFIGS: RegionConfig[] = [
     table: "uae_news",
     sources: [
       { source: "Khaleej Times", base: "https://www.khaleejtimes.com/uae", rss: "https://www.khaleejtimes.com/stories.rss" },
-      { source: "Gulf News", base: "https://gulfnews.com/uae", rss: "https://news.google.com/rss/search?q=site:gulfnews.com&hl=en-US" },
+      //{ source: "Gulf News", base: "https://gulfnews.com/uae", rss: "https://news.google.com/rss/search?q=site:gulfnews.com&hl=en-US" },
       //{ source: "The National", base: "https://www.thenationalnews.com/uae", rss: "" },
       { source: "Emirates247", base: "https://www.emirates247.com/news", rss: "https://www.emirates247.com/rss/mobile/v2/flash-news.rss" },
     ],
@@ -97,6 +97,67 @@ const REGION_CONFIGS: RegionConfig[] = [
 
 function compactErr(msg: string): string {
   return msg.replace(/\s+/g, " ").trim().slice(0, 260);
+}
+
+function looksLikeSectionUrl(url: string) {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    return [
+      "/replay/news",
+      "/uae",
+      "/india",
+      "/news",
+      "/videos",
+      "/latest-news",
+      "/news/national",
+    ].includes(pathname);
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeSectionTitle(title: string) {
+  return /top stories|latest news|updates \||\| gulf news|home page|replay|videos/i.test(title);
+}
+
+function hasLowQualityText(text: string) {
+  const normalized = text.toLowerCase();
+  const blockedPhrases = [
+    "all rights reserved",
+    "copyright",
+    "powered by ict dept",
+    "ask the law",
+    "the view from india",
+    "first day first show",
+    "today's cache",
+    "science for all",
+    "newsletter",
+    "sign up",
+    "follow us on",
+    "whatsapp channel",
+    "recommended for you",
+  ];
+
+  if (blockedPhrases.some((phrase) => normalized.includes(phrase))) {
+    return true;
+  }
+
+  const sentences = normalized
+    .split(/[.!?]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 20);
+  const uniqueSentences = new Set(sentences);
+
+  return uniqueSentences.size < 2;
+}
+
+function isValidArticle(url: string, article: { title: string; fullText: string }) {
+  if (!article.title.trim()) return false;
+  if (looksLikeSectionUrl(url)) return false;
+  if (looksLikeSectionTitle(article.title)) return false;
+  if (article.fullText.trim().length < 140) return false;
+  if (hasLowQualityText(article.fullText)) return false;
+  return true;
 }
 
 async function getRssLinks(rssUrl: string): Promise<string[]> {
@@ -252,7 +313,7 @@ async function ingestRegion(config: RegionConfig): Promise<RegionResult> {
         }
 
         const art = await extractArticle(cleaned, site.base);
-        if (!art || !art.fullText) {
+        if (!art || !art.fullText || !isValidArticle(cleaned, art)) {
           siteStats.extractFailed += 1;
           continue;
         }

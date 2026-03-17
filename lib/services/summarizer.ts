@@ -72,6 +72,27 @@ function toBullets(raw: string): string[] {
   return extracted;
 }
 
+function normalizeBulletKey(text: string) {
+  return normalizeWhitespace(text)
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .trim();
+}
+
+function uniqueBullets(items: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const item of items) {
+    const key = normalizeBulletKey(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+
+  return result;
+}
+
 function trimIncompleteTail(text: string, lang: "fr" | "en"): string {
   const trailing = lang === "fr"
     ? new Set(["de", "du", "des", "la", "le", "les", "et", "ou", "dans", "sur", "avec", "pour", "par", "en"])
@@ -105,22 +126,25 @@ function finalizeBullet(item: string, lang: "fr" | "en"): string {
 }
 
 function enforceBulletSummary(raw: string, lang: "fr" | "en"): string {
-  const items = toBullets(raw);
+  const items = uniqueBullets(toBullets(raw));
   const sliced = items
-    .slice(0, MAX_BULLETS)
     .map((item) => finalizeBullet(item, lang))
     .filter((item) => item.length > 0);
 
-  return sliced.map((item) => `• ${item}`).join("\n");
+  return uniqueBullets(sliced)
+    .slice(0, MAX_BULLETS)
+    .map((item) => `• ${item}`)
+    .join("\n");
 }
 
 function buildFallbackBullets(clean: string, lang: "fr" | "en"): string {
-  const fallbackParts = stripPublishedNoise(clean)
+  const fallbackParts = uniqueBullets(
+    stripPublishedNoise(clean)
     .split(/(?<=[.!?])\s+/)
     .map((part) => normalizeWhitespace(part))
     .map((part) => finalizeBullet(part, lang))
     .filter((part) => part.length > 0)
-    .slice(0, MIN_BULLETS);
+  ).slice(0, MIN_BULLETS);
 
   const padded = [...fallbackParts];
   while (padded.length < MIN_BULLETS) {
@@ -129,8 +153,7 @@ function buildFallbackBullets(clean: string, lang: "fr" | "en"): string {
     else padded.push(lang === "fr" ? "Résumé indisponible." : "Summary unavailable.");
   }
 
-  return padded
-    .slice(0, MAX_BULLETS)
+  return uniqueBullets(padded)
     .map((line) => finalizeBullet(line, lang))
     .filter((line) => line.length > 0)
     .slice(0, MAX_BULLETS)
