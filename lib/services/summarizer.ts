@@ -6,6 +6,24 @@ const MIN_BULLETS = 4;
 const MAX_BULLETS = 4;
 const MAX_WORDS_PER_BULLET = 28;
 
+function protectAbbreviations(text: string) {
+  return text
+    .replace(/\ba\.m\./gi, (m) => m.replace(/\./g, "__DOT__"))
+    .replace(/\bp\.m\./gi, (m) => m.replace(/\./g, "__DOT__"))
+    .replace(/\bmr\./gi, (m) => m.replace(/\./g, "__DOT__"))
+    .replace(/\bmrs\./gi, (m) => m.replace(/\./g, "__DOT__"))
+    .replace(/\bms\./gi, (m) => m.replace(/\./g, "__DOT__"))
+    .replace(/\bdr\./gi, (m) => m.replace(/\./g, "__DOT__"))
+    .replace(/\bprof\./gi, (m) => m.replace(/\./g, "__DOT__"))
+    .replace(/\bno\./gi, (m) => m.replace(/\./g, "__DOT__"))
+    .replace(/\bu\.s\./gi, (m) => m.replace(/\./g, "__DOT__"))
+    .replace(/\bu\.k\./gi, (m) => m.replace(/\./g, "__DOT__"));
+}
+
+function restoreAbbreviations(text: string) {
+  return text.replace(/__DOT__/g, ".");
+}
+
 function trimToWords(text: string, max: number) {
   return normalizeWhitespace(text).split(" ").slice(0, max).join(" ");
 }
@@ -124,8 +142,8 @@ function normalizeBulletSequence(items: string[]) {
 
 function trimIncompleteTail(text: string, lang: "fr" | "en"): string {
   const trailing = lang === "fr"
-    ? new Set(["de", "du", "des", "la", "le", "les", "et", "ou", "dans", "sur", "avec", "pour", "par", "en"])
-    : new Set(["of", "to", "the", "and", "or", "in", "on", "with", "for", "by", "at", "from"]);
+    ? new Set(["de", "du", "des", "la", "le", "les", "et", "ou", "dans", "sur", "avec", "pour", "par", "en", "été", "avait", "ont"])
+    : new Set(["of", "to", "the", "and", "or", "in", "on", "with", "for", "by", "at", "from", "have", "has", "had", "been", "being", "were", "was"]);
 
   let out = text
     .trim()
@@ -175,10 +193,11 @@ function enforceBulletSummary(raw: string, lang: "fr" | "en"): string {
 }
 
 function buildFallbackBullets(clean: string, lang: "fr" | "en"): string {
+  const protectedText = protectAbbreviations(stripPublishedNoise(clean));
   const fallbackParts = normalizeBulletSequence(uniqueBullets(
-    stripPublishedNoise(clean)
+    protectedText
     .split(/(?<=[.!?])\s+/)
-    .map((part) => normalizeWhitespace(part))
+    .map((part) => normalizeWhitespace(restoreAbbreviations(part)))
     .map((part) => finalizeBullet(part, lang))
     .filter((part) => part.length > 0)
   )).slice(0, MIN_BULLETS);
@@ -196,6 +215,31 @@ function buildFallbackBullets(clean: string, lang: "fr" | "en"): string {
     .slice(0, MAX_BULLETS)
     .map((line) => `• ${line}`)
     .join("\n");
+}
+
+function hasMalformedBullets(summary: string, lang: "fr" | "en") {
+  const bullets = toBullets(summary);
+  if (bullets.length < MIN_BULLETS) return true;
+
+  const badTailPatterns =
+    lang === "fr"
+      ? [
+          /\b(selon|avec|pour|dans|sur|par|en|au|aux|du|des|le|la|les)\.$/i,
+          /["“][^"”]*$/i,
+        ]
+      : [
+          /\b(to the|to a|according to the|said the|told the|with the|for the|in the|on the)\.$/i,
+          /["“][^"”]*$/i,
+        ];
+
+  return bullets.some((bullet) => {
+    const normalized = normalizeWhitespace(bullet);
+    const wordCount = normalized.split(" ").filter(Boolean).length;
+    if (wordCount < 5) return true;
+    if (/^[^a-zA-ZÀ-ÿ0-9]*$/.test(normalized)) return true;
+    if (badTailPatterns.some((pattern) => pattern.test(normalized))) return true;
+    return false;
+  });
 }
 
 async function generateSummary(clean: string, lang: "fr" | "en") {
@@ -258,20 +302,26 @@ export async function summarizeNews(rawText: string): Promise<string> {
 
   try {
     const s = await generateSummary(clean, lang);
-    const bullets = toBullets(s);
+    const enforced = enforceBulletSummary(s, lang);
+    const bullets = toBullets(enforced);
 
-    if (bullets.length < MIN_BULLETS || looksCopied(s, clean)) {
+    if (bullets.length < MIN_BULLETS || looksCopied(enforced, clean) || hasMalformedBullets(enforced, lang)) {
       const r = await generateSummary(clean, lang);
-      const retryBullets = toBullets(r);
+      const retryEnforced = enforceBulletSummary(r, lang);
+      const retryBullets = toBullets(retryEnforced);
 
-      if (retryBullets.length < MIN_BULLETS || looksCopied(r, clean)) {
+      if (
+        retryBullets.length < MIN_BULLETS ||
+        looksCopied(retryEnforced, clean) ||
+        hasMalformedBullets(retryEnforced, lang)
+      ) {
         return buildFallbackBullets(clean, lang);
       }
 
-      return enforceBulletSummary(r, lang);
+      return retryEnforced;
     }
 
-    return enforceBulletSummary(s, lang);
+    return enforced;
   } catch {
     return buildFallbackBullets(clean, lang);
   }

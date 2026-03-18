@@ -68,10 +68,10 @@ const REGION_CONFIGS: RegionConfig[] = [
     region: "Mauritius",
     table: "news_articles",
     sources: [
-      { source: "NewsMoris", base: "https://newsmoris.com", rss: "https://newsmoris.com/feed/" },
+      { source: "NewsMoris", base: "https://newsmoris.com/category/news/", rss: "https://newsmoris.com/feed/" },
       //{ source: "Mauritius Broadcasting", base: "https://mbcradio.tv", rss: "https://mbcradio.tv/news/feed" },
       { source: "Defi Media Group", base: "https://defimedia.info", rss: "https://defimedia.info/rss.xml" },
-      { source: "Le Mauricien", base: "https://lemauricien.com", rss: "https://www.lemauricien.com/feed/" },
+      { source: "Maurice Info", base: "https://maurice-info.mu/", rss: "https://maurice-info.mu/feed" },
     ],
   },
   {
@@ -118,6 +118,7 @@ function looksLikeSectionUrl(url: string) {
       return true;
     }
 
+    if (pathname.includes("/video/") || pathname.includes("/videos/")) return true;
     if (/^\/india\/[a-z-]+$/.test(pathname)) return true;
     if (/^\/uae\/[a-z-]+$/.test(pathname)) return true;
     if (/^\/news\/[a-z-]+$/.test(pathname)) return true;
@@ -167,9 +168,34 @@ function hasLowQualityText(text: string) {
 }
 
 function shouldAddFinanceCategory(title: string, text: string, category: string) {
+  const combined = `${title} ${text}`.toLowerCase();
+  const negativeFinanceContext = [
+    "war",
+    "attack",
+    "airstrike",
+    "missile",
+    "bomb",
+    "military",
+    "conflict",
+    "crisis",
+    "death",
+    "killed",
+    "injured",
+    "hostage",
+    "ceasefire",
+    "israel",
+    "iran",
+    "gaza",
+    "beirut",
+    "hezbollah",
+  ];
+
+  if (negativeFinanceContext.some((keyword) => combined.includes(keyword))) {
+    return false;
+  }
+
   if (["Business", "Economy"].includes(category)) return true;
 
-  const combined = `${title} ${text}`.toLowerCase();
   const strongFinanceKeywords = [
     "stock market",
     "share market",
@@ -448,7 +474,7 @@ async function ingestRegion(config: RegionConfig): Promise<RegionResult> {
         const summary = await summarizeNews(art.fullText);
         const category = await classifyNews(art.fullText || art.title);
         const headlineObj = await generateHeadline(`${art.title}\n\n${summary}`);
-        const bottomLine = await generateBottomLine(`${art.title}\n\n${summary}`);
+        const bottomLine = await generateBottomLine(`${art.title}\n\n${art.fullText}`);
 
         const finalImg =
           findClosestRssImage(cleaned, rssImages) ||

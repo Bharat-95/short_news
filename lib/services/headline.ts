@@ -8,6 +8,20 @@ function firstN(text: string, n: number) {
   return normalizeWhitespace(text).split(" ").slice(0, n).join(" ");
 }
 
+function cleanHeadlineText(text: string) {
+  return decodeHtmlEntities(text)
+    .replace(/\s*-\s*india today$/i, "")
+    .replace(/\s*-\s*[^-]+$/i, "")
+    .replace(/[:;,.!?()[\]"'`]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanHeadlineWords(text: string, count: number) {
+  const cleaned = cleanHeadlineText(text);
+  return firstN(cleaned, count);
+}
+
 export async function generateHeadline(text: string) {
   const clean = decodeHtmlEntities(stripHtml(text)).slice(0, 2000);
 
@@ -42,14 +56,14 @@ Rules:
       jsonMatch ? JSON.parse(jsonMatch[0]) : { headline: "", subheadline: "" };
 
     // enforce 2-3 words
-    const headline = firstN(obj.headline || clean, 3);
-    const subheadline = firstN(obj.subheadline || clean, 3);
+    const headline = cleanHeadlineWords(obj.headline || clean, 3);
+    const subheadline = cleanHeadlineWords(obj.subheadline || clean, 3);
 
     return { headline, subheadline };
   } catch {
     return {
-      headline: firstN(clean, 3),
-      subheadline: firstN(clean, 3),
+      headline: cleanHeadlineWords(clean, 3),
+      subheadline: cleanHeadlineWords(clean, 3),
     };
   }
 }
