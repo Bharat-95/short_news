@@ -74,6 +74,7 @@ const REGION_CONFIGS: RegionConfig[] = [
       { source: "Maurice Info", base: "https://maurice-info.mu/", rss: "https://maurice-info.mu/feed" },
     ],
   },
+  //Checking
   {
     region: "UAE",
     table: "uae_news",
