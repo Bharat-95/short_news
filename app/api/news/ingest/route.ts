@@ -170,56 +170,106 @@ function shouldAddFinanceCategory(title: string, text: string, category: string)
   if (["Business", "Economy"].includes(category)) return true;
 
   const combined = `${title} ${text}`.toLowerCase();
-  const financeKeywords = [
-    "finance",
-    "financing",
-    "economy",
-    "economic",
-    "economics",
-    "business",
-    "market",
-    "markets",
-    "stock",
-    "stocks",
-    "share",
+  const strongFinanceKeywords = [
+    "stock market",
+    "share market",
     "shares",
+    "stocks",
     "investor",
-    "investors",
     "investment",
-    "investments",
-    "trade",
-    "trading",
-    "bank",
+    "funding",
+    "startup funding",
     "banking",
     "loan",
-    "loans",
     "credit",
+    "gdp",
     "inflation",
-    "revenue",
+    "fiscal",
+    "monetary policy",
     "profit",
     "profits",
-    "loss",
-    "losses",
-    "gdp",
-    "startup",
-    "start-up",
-    "funding",
-    "fund",
-    "funds",
-    "oil price",
-    "energy prices",
+    "revenue",
+    "earnings",
+    "quarterly results",
+    "ipo",
     "currency",
+    "exchange rate",
     "rupee",
     "dollar",
     "dirham",
-    "fiscal",
-    "monetary",
-    "tariff",
     "tax",
     "taxes",
+    "tariff",
   ];
 
-  return financeKeywords.some((keyword) => combined.includes(keyword));
+  const weakFinanceKeywords = [
+    "economy",
+    "economic",
+    "business",
+    "market",
+    "markets",
+    "trade",
+    "trading",
+    "bank",
+    "fund",
+  ];
+
+  const strongMatches = strongFinanceKeywords.filter((keyword) => combined.includes(keyword)).length;
+  const weakMatches = weakFinanceKeywords.filter((keyword) => combined.includes(keyword)).length;
+
+  return strongMatches >= 1 || weakMatches >= 2;
+}
+
+function shouldAddGoodNewsCategory(title: string, text: string, category: string) {
+  const combined = `${title} ${text}`.toLowerCase();
+  const positiveKeywords = [
+    "award",
+    "awarded",
+    "won",
+    "win",
+    "victory",
+    "scholarship",
+    "rescued",
+    "recovery",
+    "milestone",
+    "record",
+    "success",
+    "achievement",
+    "improved",
+    "improvement",
+    "breakthrough",
+  ];
+
+  const negativeKeywords = [
+    "war",
+    "killed",
+    "dead",
+    "death",
+    "attack",
+    "bomb",
+    "crisis",
+    "conflict",
+    "accident",
+    "crime",
+    "arrested",
+    "fraud",
+    "protest",
+    "injured",
+    "violence",
+    "outbreak",
+    "fire",
+    "blast",
+  ];
+
+  if (["Crime", "Accident", "Politics", "International"].includes(category)) {
+    return false;
+  }
+
+  if (negativeKeywords.some((keyword) => combined.includes(keyword))) {
+    return false;
+  }
+
+  return positiveKeywords.some((keyword) => combined.includes(keyword));
 }
 
 function isValidArticle(url: string, article: { title: string; fullText: string }) {
@@ -411,10 +461,7 @@ async function ingestRegion(config: RegionConfig): Promise<RegionResult> {
           categoriesArr.push("Finance");
         }
 
-        const goodNewsPattern =
-          /\b(win|success|award|growth|profit|improved|record|milestone|boost|increase)\b/i;
-
-        if (goodNewsPattern.test(art.fullText)) {
+        if (shouldAddGoodNewsCategory(art.title, art.fullText, category)) {
           categoriesArr.push("Good News");
         }
 
