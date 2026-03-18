@@ -88,10 +88,11 @@ const REGION_CONFIGS: RegionConfig[] = [
     region: "India",
     table: "indian_news",
     sources: [
+      { source: "India Today", base: "https://www.indiatoday.in/", rss: "https://www.indiatoday.in/rss/home" },
+      { source: "NDTV", base: "https://www.ndtv.com/latest?pfrom=home-ndtv_mainnavigation", rss: "https://feeds.feedburner.com/ndtvnews-latest" },
       { source: "The Hindu", base: "https://www.thehindu.com", rss: "https://www.thehindu.com/news/national/feeder/default.rss" },
       { source: "Indian Express", base: "https://indianexpress.com", rss: "https://indianexpress.com/section/india/feed/" },
-      { source: "India Today", base: "https://www.indiatoday.in/india", rss: "" },
-      { source: "Deccan Herald", base: "https://www.deccanherald.com/india", rss: "" },
+      
     ],
   },
 ];
