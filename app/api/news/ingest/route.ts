@@ -13,6 +13,7 @@ import { extractArticle } from "@/lib/extractors/articleExtractor";
 import { summarizeNews } from "@/lib/services/summarizer";
 import { classifyNews } from "@/lib/services/classifier";
 import { generateHeadline } from "@/lib/services/headline";
+import { generateBottomLine } from "@/lib/services/bottomLine";
 
 import { isDuplicateUrl, isDuplicateTitle } from "@/lib/services/dedupe";
 import { supabaseBrowser } from "@/lib/db";
@@ -102,7 +103,9 @@ function compactErr(msg: string): string {
 function looksLikeSectionUrl(url: string) {
   try {
     const pathname = new URL(url).pathname.toLowerCase();
-    return [
+    const segments = pathname.split("/").filter(Boolean);
+
+    if ([
       "/replay/news",
       "/uae",
       "/india",
@@ -110,14 +113,25 @@ function looksLikeSectionUrl(url: string) {
       "/videos",
       "/latest-news",
       "/news/national",
-    ].includes(pathname);
+    ].includes(pathname)) {
+      return true;
+    }
+
+    if (/^\/india\/[a-z-]+$/.test(pathname)) return true;
+    if (/^\/uae\/[a-z-]+$/.test(pathname)) return true;
+    if (/^\/news\/[a-z-]+$/.test(pathname)) return true;
+    if (segments.length <= 2 && !/\d{4}\/\d{2}\/\d{2}/.test(pathname) && !/article|story|news|ece|\/\d{3,}/.test(pathname)) {
+      return true;
+    }
+
+    return false;
   } catch {
     return false;
   }
 }
 
 function looksLikeSectionTitle(title: string) {
-  return /top stories|latest news|updates \||\| gulf news|home page|replay|videos/i.test(title);
+  return /top stories|latest news|news updates|updates \||\| gulf news|home page|replay|videos/i.test(title);
 }
 
 function hasLowQualityText(text: string) {
@@ -149,6 +163,62 @@ function hasLowQualityText(text: string) {
   const uniqueSentences = new Set(sentences);
 
   return uniqueSentences.size < 2;
+}
+
+function shouldAddFinanceCategory(title: string, text: string, category: string) {
+  if (["Business", "Economy"].includes(category)) return true;
+
+  const combined = `${title} ${text}`.toLowerCase();
+  const financeKeywords = [
+    "finance",
+    "financing",
+    "economy",
+    "economic",
+    "economics",
+    "business",
+    "market",
+    "markets",
+    "stock",
+    "stocks",
+    "share",
+    "shares",
+    "investor",
+    "investors",
+    "investment",
+    "investments",
+    "trade",
+    "trading",
+    "bank",
+    "banking",
+    "loan",
+    "loans",
+    "credit",
+    "inflation",
+    "revenue",
+    "profit",
+    "profits",
+    "loss",
+    "losses",
+    "gdp",
+    "startup",
+    "start-up",
+    "funding",
+    "fund",
+    "funds",
+    "oil price",
+    "energy prices",
+    "currency",
+    "rupee",
+    "dollar",
+    "dirham",
+    "fiscal",
+    "monetary",
+    "tariff",
+    "tax",
+    "taxes",
+  ];
+
+  return financeKeywords.some((keyword) => combined.includes(keyword));
 }
 
 function isValidArticle(url: string, article: { title: string; fullText: string }) {
@@ -268,6 +338,7 @@ async function insertIntoTable(table: NewsTable, payload: FinalArticlePayload) {
     topics: payload.topics,
     categories: payload.categories,
     headline: payload.headline,
+    bottom_line: payload.bottom_line,
   };
 
   const { error: retryErr } = await supabaseBrowser.from(table).insert(retryPayload);
@@ -326,6 +397,7 @@ async function ingestRegion(config: RegionConfig): Promise<RegionResult> {
         const summary = await summarizeNews(art.fullText);
         const category = await classifyNews(art.fullText || art.title);
         const headlineObj = await generateHeadline(`${art.title}\n\n${summary}`);
+        const bottomLine = await generateBottomLine(`${art.title}\n\n${summary}`);
 
         const finalImg =
           findClosestRssImage(cleaned, rssImages) ||
@@ -334,7 +406,7 @@ async function ingestRegion(config: RegionConfig): Promise<RegionResult> {
 
         const categoriesArr: string[] = ["Top Stories"];
 
-        if (["Business", "Economy"].includes(category)) {
+        if (shouldAddFinanceCategory(art.title, art.fullText, category)) {
           categoriesArr.push("Finance");
         }
 
@@ -354,6 +426,7 @@ async function ingestRegion(config: RegionConfig): Promise<RegionResult> {
           topics: category,
           categories: categoriesArr,
           headline: headlineObj,
+          bottom_line: bottomLine,
           pub_date: art.pubDate ?? null,
         };
 

@@ -3,7 +3,7 @@ import { stripHtml, normalizeWhitespace } from "../utils/normalize";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 const MIN_BULLETS = 4;
-const MAX_BULLETS = 5;
+const MAX_BULLETS = 4;
 const MAX_WORDS_PER_BULLET = 28;
 
 function trimToWords(text: string, max: number) {
@@ -93,14 +93,50 @@ function uniqueBullets(items: string[]) {
   return result;
 }
 
+function normalizeBulletSequence(items: string[]) {
+  const merged: string[] = [];
+  let carry = "";
+
+  for (const rawItem of items) {
+    const item = normalizeWhitespace(`${carry} ${rawItem}`.trim());
+    carry = "";
+    if (!item) continue;
+
+    const isFragment =
+      item.length <= 8 ||
+      /^(mr|mrs|ms|dr|prof|shri|smt|k|v|b)\.$/i.test(item) ||
+      /^[a-z]\.$/i.test(item);
+
+    if (isFragment) {
+      carry = item;
+      continue;
+    }
+
+    merged.push(item);
+  }
+
+  if (carry && merged.length > 0) {
+    merged[merged.length - 1] = normalizeWhitespace(`${merged[merged.length - 1]} ${carry}`);
+  }
+
+  return merged;
+}
+
 function trimIncompleteTail(text: string, lang: "fr" | "en"): string {
   const trailing = lang === "fr"
     ? new Set(["de", "du", "des", "la", "le", "les", "et", "ou", "dans", "sur", "avec", "pour", "par", "en"])
     : new Set(["of", "to", "the", "and", "or", "in", "on", "with", "for", "by", "at", "from"]);
 
-  let out = text.trim().replace(/[,:;]+$/g, "").trim();
+  let out = text
+    .trim()
+    .replace(/^["'`“”‘’.,:;\-()\[\]]+/, "")
+    .replace(/[,:;]+$/g, "")
+    .trim();
   const words = out.split(" ").filter(Boolean);
-  while (words.length > 6 && trailing.has(words[words.length - 1].toLowerCase())) {
+  while (
+    words.length > 6 &&
+    trailing.has(words[words.length - 1].toLowerCase().replace(/[.!?,"'`“”‘’]+$/g, ""))
+  ) {
     words.pop();
   }
   out = words.join(" ").trim();
@@ -120,31 +156,32 @@ function finalizeBullet(item: string, lang: "fr" | "en"): string {
   }
 
   clean = trimIncompleteTail(clean, lang);
+  clean = clean.replace(/^["'`“”‘’]+/, "").trim();
   if (!clean) return "";
   if (!/[.!?]$/.test(clean)) clean += ".";
   return clean;
 }
 
 function enforceBulletSummary(raw: string, lang: "fr" | "en"): string {
-  const items = uniqueBullets(toBullets(raw));
+  const items = normalizeBulletSequence(uniqueBullets(toBullets(raw)));
   const sliced = items
     .map((item) => finalizeBullet(item, lang))
     .filter((item) => item.length > 0);
 
-  return uniqueBullets(sliced)
+  return normalizeBulletSequence(uniqueBullets(sliced))
     .slice(0, MAX_BULLETS)
     .map((item) => `• ${item}`)
     .join("\n");
 }
 
 function buildFallbackBullets(clean: string, lang: "fr" | "en"): string {
-  const fallbackParts = uniqueBullets(
+  const fallbackParts = normalizeBulletSequence(uniqueBullets(
     stripPublishedNoise(clean)
     .split(/(?<=[.!?])\s+/)
     .map((part) => normalizeWhitespace(part))
     .map((part) => finalizeBullet(part, lang))
     .filter((part) => part.length > 0)
-  ).slice(0, MIN_BULLETS);
+  )).slice(0, MIN_BULLETS);
 
   const padded = [...fallbackParts];
   while (padded.length < MIN_BULLETS) {
@@ -153,7 +190,7 @@ function buildFallbackBullets(clean: string, lang: "fr" | "en"): string {
     else padded.push(lang === "fr" ? "Résumé indisponible." : "Summary unavailable.");
   }
 
-  return uniqueBullets(padded)
+  return normalizeBulletSequence(uniqueBullets(padded))
     .map((line) => finalizeBullet(line, lang))
     .filter((line) => line.length > 0)
     .slice(0, MAX_BULLETS)

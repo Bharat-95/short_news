@@ -40,5 +40,6 @@ export interface FinalArticlePayload {
     headline: string;
     subheadline: string;
   };
+  bottom_line?: string | null;
   pub_date?: string | null;
 }
