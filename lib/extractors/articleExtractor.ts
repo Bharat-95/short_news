@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import { httpGet } from "../utils/http";
 import { absoluteUrl } from "../utils/url";
-import { normalizeWhitespace, stripHtml } from "../utils/normalize";
+import { decodeHtmlEntities, normalizeWhitespace, stripHtml } from "../utils/normalize";
 
 export interface ExtractedArticle {
   title: string;
@@ -244,17 +244,21 @@ export async function extractArticle(url: string, base: string) {
   const jsonLd = extractJsonLd($);
 
   const title =
-    jsonLd?.headline ||
-    $('meta[property="og:title"]').attr("content") ||
-    $('meta[name="twitter:title"]').attr("content") ||
-    $("h1").first().text().trim();
+    decodeHtmlEntities(
+      jsonLd?.headline ||
+      $('meta[property="og:title"]').attr("content") ||
+      $('meta[name="twitter:title"]').attr("content") ||
+      $("h1").first().text().trim()
+    );
 
   const description =
-    jsonLd?.description ||
-    $('meta[property="og:description"]').attr("content") ||
-    $('meta[name="twitter:description"]').attr("content") ||
-    $("meta[name='description']").attr("content") ||
-    "";
+    decodeHtmlEntities(
+      jsonLd?.description ||
+      $('meta[property="og:description"]').attr("content") ||
+      $('meta[name="twitter:description"]').attr("content") ||
+      $("meta[name='description']").attr("content") ||
+      ""
+    );
 
   const metaImage =
     jsonLd?.image ||

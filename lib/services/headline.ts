@@ -1,6 +1,6 @@
 // lib/services/headline.ts
 import OpenAI from "openai";
-import { stripHtml, normalizeWhitespace } from "../utils/normalize";
+import { decodeHtmlEntities, stripHtml, normalizeWhitespace } from "../utils/normalize";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -9,7 +9,7 @@ function firstN(text: string, n: number) {
 }
 
 export async function generateHeadline(text: string) {
-  const clean = stripHtml(text).slice(0, 2000);
+  const clean = decodeHtmlEntities(stripHtml(text)).slice(0, 2000);
 
   const system = `
 You are a news editor.  

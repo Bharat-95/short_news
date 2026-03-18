@@ -1,9 +1,43 @@
 // lib/utils/normalize.ts
 
+function decodeNumericEntity(entity: string) {
+  const isHex = entity.toLowerCase().startsWith("x");
+  const value = isHex ? parseInt(entity.slice(1), 16) : parseInt(entity, 10);
+  if (Number.isNaN(value)) return null;
+  try {
+    return String.fromCodePoint(value);
+  } catch {
+    return null;
+  }
+}
+
+export function decodeHtmlEntities(input?: string | null) {
+  if (!input) return "";
+
+  const named: Record<string, string> = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    nbsp: " ",
+    rsquo: "'",
+    lsquo: "'",
+    ldquo: '"',
+    rdquo: '"',
+    mdash: "-",
+    ndash: "-",
+  };
+
+  return input
+    .replace(/&#(x?[0-9a-fA-F]+);/g, (_match, entity) => decodeNumericEntity(entity) ?? _match)
+    .replace(/&([a-zA-Z]+);/g, (match, entity) => named[entity] ?? match);
+}
+
 /** Remove HTML tags */
 export function stripHtml(input?: string | null) {
   if (!input) return "";
-  return input
+  return decodeHtmlEntities(input)
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, "")
     .replace(/<\/?[^>]+(>|$)/g, " ")
