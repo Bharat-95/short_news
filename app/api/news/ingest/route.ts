@@ -551,6 +551,23 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const requestUrl = new URL(req.url);
+  const dryRun = requestUrl.searchParams.get("dryRun") === "1";
+
+  if (dryRun) {
+    return NextResponse.json({
+      ok: true,
+      dryRun: true,
+      message: "Ingest route is reachable and authorized",
+      checks: {
+        hasCronSecret: Boolean(process.env.CRON_SECRET),
+        hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
+        hasSupabaseUrl: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
+        hasSupabaseAnonKey: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+      },
+    });
+  }
+
   const results: RegionResult[] = [];
 
   for (const config of REGION_CONFIGS) {
